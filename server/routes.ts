@@ -789,7 +789,337 @@ export async function registerRoutes(
   });
 
   // ==========================================
-  // DASHBOARD STATS ROUTES
+  // DASHBOARD ROUTES (aggregated data for each role)
+  // ==========================================
+  
+  // Student dashboard
+  app.get('/api/student/dashboard', isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const studentId = req.user?.claims?.sub;
+      if (!studentId) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+      
+      // Get student enrollments to find courses
+      const enrollmentList = await storage.getEnrollmentsByStudent(studentId);
+      const activeCourseIds = enrollmentList
+        .filter(e => e.status === "enrolled")
+        .map(e => e.courseId);
+      
+      // Get assignments for student
+      const allAssignments = await storage.getAssignmentsForStudent(studentId);
+      const pendingAssignments = allAssignments.filter(a => a.status === "published");
+      
+      // Get submissions
+      const studentSubmissions = await storage.getSubmissionsByStudent(studentId);
+      const completedCount = studentSubmissions.filter(s => s.status === "submitted" || s.status === "graded").length;
+      
+      // Get grades
+      const studentGrades = await storage.getGradesByStudent(studentId);
+      let averageGrade: number | null = null;
+      if (studentGrades.length > 0) {
+        const totalPercentage = studentGrades.reduce((sum, g) => {
+          if (g.submission?.assignment?.pointsPossible && g.submission.assignment.pointsPossible > 0) {
+            return sum + (g.points / g.submission.assignment.pointsPossible * 100);
+          }
+          return sum;
+        }, 0);
+        averageGrade = Math.round(totalPercentage / studentGrades.length);
+      }
+      
+      // Get courses with tutor info
+      const allCourses = await storage.getAllCourses();
+      const enrolledCourses = allCourses.filter(c => activeCourseIds.includes(c.id));
+      
+      // Get announcements
+      const announcementsList = await storage.getAnnouncementsForStudent(studentId);
+      
+      res.json({
+        stats: {
+          enrolledCourses: enrolledCourses.length,
+          pendingAssignments: pendingAssignments.length,
+          completedAssignments: completedCount,
+          averageGrade,
+        },
+        courses: enrolledCourses,
+        upcomingAssignments: pendingAssignments.slice(0, 5),
+        announcements: announcementsList.slice(0, 5),
+      });
+    } catch (error) {
+      console.error("Error fetching student dashboard:", error);
+      res.status(500).json({ message: "Failed to fetch dashboard data" });
+    }
+  });
+
+  // Tutor dashboard
+  app.get('/api/tutor/dashboard', isAuthenticated, requireRole("tutor"), async (req: Request, res: Response) => {
+    try {
+      const tutorId = req.user?.claims?.sub;
+      if (!tutorId) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+      
+      // Get tutor's courses
+      const tutorCourses = await storage.getCoursesByTutor(tutorId);
+      
+      // Count total students across all courses
+      let totalStudents = 0;
+      tutorCourses.forEach(c => {
+        totalStudents += c.enrollmentCount || 0;
+      });
+      
+      // Get pending submissions to grade
+      let pendingSubmissions = 0;
+      const recentSubmissions: { id: string; studentName: string; assignmentTitle: string; submittedAt: string }[] = [];
+      
+      for (const course of tutorCourses) {
+        const courseAssignments = await storage.getAssignmentsByCourse(course.id);
+        for (const assignment of courseAssignments) {
+          const subs = await storage.getSubmissionsByAssignment(assignment.id);
+          const pending = subs.filter(s => s.status === "submitted");
+          pendingSubmissions += pending.length;
+          
+          // Add to recent submissions
+          for (const sub of pending.slice(0, 3)) {
+            recentSubmissions.push({
+              id: sub.id,
+              studentName: `${sub.student?.firstName || ''} ${sub.student?.lastName || ''}`.trim() || 'Unknown',
+              assignmentTitle: assignment.title,
+              submittedAt: sub.submittedAt?.toISOString() || new Date().toISOString(),
+            });
+          }
+        }
+      }
+      
+      // Calculate average grade across all courses
+      const tutorGrades = await storage.getGradesByTutor(tutorId);
+      let averageCourseGrade: number | null = null;
+      if (tutorGrades.length > 0) {
+        const totalPercentage = tutorGrades.reduce((sum, g) => {
+          if (g.submission?.assignment?.pointsPossible && g.submission.assignment.pointsPossible > 0) {
+            return sum + (g.points / g.submission.assignment.pointsPossible * 100);
+          }
+          return sum;
+        }, 0);
+        averageCourseGrade = Math.round(totalPercentage / tutorGrades.length);
+      }
+      
+      res.json({
+        stats: {
+          totalCourses: tutorCourses.length,
+          totalStudents,
+          pendingSubmissions,
+          averageCourseGrade,
+        },
+        courses: tutorCourses,
+        recentSubmissions: recentSubmissions.slice(0, 5),
+      });
+    } catch (error) {
+      console.error("Error fetching tutor dashboard:", error);
+      res.status(500).json({ message: "Failed to fetch dashboard data" });
+    }
+  });
+
+  // Manager dashboard
+  app.get('/api/manager/dashboard', isAuthenticated, requireRole("manager", "admin"), async (req: Request, res: Response) => {
+    try {
+      const stats = await storage.getManagerStats();
+      const allCourses = await storage.getAllCourses();
+      const tutors = await storage.getUsersByRole("tutor");
+      const students = await storage.getUsersByRole("student");
+      
+      res.json({
+        stats: {
+          totalCourses: stats.totalCourses,
+          totalStudents: stats.totalStudents,
+          totalTutors: stats.totalTutors,
+          activeEnrollments: 0, // Would need additional query
+        },
+        courses: allCourses.slice(0, 10),
+        tutors: tutors.slice(0, 10),
+        students: students.slice(0, 10),
+      });
+    } catch (error) {
+      console.error("Error fetching manager dashboard:", error);
+      res.status(500).json({ message: "Failed to fetch dashboard data" });
+    }
+  });
+
+  // Admin dashboard
+  app.get('/api/admin/dashboard', isAuthenticated, requireRole("admin"), async (req: Request, res: Response) => {
+    try {
+      const allUsers = await storage.getAllUsers();
+      const allCourses = await storage.getAllCourses();
+      
+      const students = allUsers.filter(u => u.role === "student");
+      const tutors = allUsers.filter(u => u.role === "tutor");
+      
+      // Count users by role
+      const roleCount: Record<string, number> = {};
+      for (const user of allUsers) {
+        roleCount[user.role] = (roleCount[user.role] || 0) + 1;
+      }
+      
+      const usersByRole = Object.entries(roleCount).map(([role, count]) => ({
+        role,
+        count,
+      }));
+      
+      res.json({
+        stats: {
+          totalUsers: allUsers.length,
+          totalStudents: students.length,
+          totalTutors: tutors.length,
+          totalCourses: allCourses.length,
+        },
+        recentUsers: allUsers.slice(0, 10),
+        usersByRole,
+      });
+    } catch (error) {
+      console.error("Error fetching admin dashboard:", error);
+      res.status(500).json({ message: "Failed to fetch dashboard data" });
+    }
+  });
+
+  // Parent dashboard
+  app.get('/api/parent/dashboard', isAuthenticated, requireRole("parent"), async (req: Request, res: Response) => {
+    try {
+      const parentId = req.user?.claims?.sub;
+      if (!parentId) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+      
+      // Get parent's children
+      const childRelations = await storage.getParentChildren(parentId);
+      
+      const childrenData = [];
+      for (const relation of childRelations) {
+        if (relation.child) {
+          const childId = relation.childId;
+          
+          // Get child's enrollments
+          const childEnrollments = await storage.getEnrollmentsByStudent(childId);
+          const activeCourseIds = childEnrollments
+            .filter(e => e.status === "enrolled")
+            .map(e => e.courseId);
+          
+          // Get assignments for child
+          const childAssignments = await storage.getAssignmentsForStudent(childId);
+          const pendingAssignments = childAssignments.filter(a => a.status === "published");
+          
+          // Get submissions
+          const childSubmissions = await storage.getSubmissionsByStudent(childId);
+          const completedCount = childSubmissions.filter(s => s.status === "submitted" || s.status === "graded").length;
+          
+          // Get child's grades
+          const childGrades = await storage.getGradesByStudent(childId);
+          let averageGrade: number | null = null;
+          if (childGrades.length > 0) {
+            const totalPercentage = childGrades.reduce((sum, g) => {
+              if (g.submission?.assignment?.pointsPossible && g.submission.assignment.pointsPossible > 0) {
+                return sum + (g.points / g.submission.assignment.pointsPossible * 100);
+              }
+              return sum;
+            }, 0);
+            averageGrade = Math.round(totalPercentage / childGrades.length);
+          }
+          
+          // Get courses with tutor info
+          const allCourses = await storage.getAllCourses();
+          const enrolledCourses = allCourses.filter(c => activeCourseIds.includes(c.id));
+          
+          childrenData.push({
+            child: relation.child,
+            stats: {
+              enrolledCourses: enrolledCourses.length,
+              pendingAssignments: pendingAssignments.length,
+              completedAssignments: completedCount,
+              averageGrade,
+            },
+            courses: enrolledCourses,
+            upcomingAssignments: pendingAssignments.slice(0, 5),
+          });
+        }
+      }
+      
+      res.json({
+        children: childrenData,
+      });
+    } catch (error) {
+      console.error("Error fetching parent dashboard:", error);
+      res.status(500).json({ message: "Failed to fetch dashboard data" });
+    }
+  });
+
+  // Student grades page
+  app.get('/api/student/grades', isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const studentId = req.user?.claims?.sub;
+      if (!studentId) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+      
+      // Get all grades for student
+      const studentGrades = await storage.getGradesByStudent(studentId);
+      
+      // Calculate stats
+      let averageScore: number | null = null;
+      if (studentGrades.length > 0) {
+        const totalPercentage = studentGrades.reduce((sum, g) => {
+          if (g.submission?.assignment?.pointsPossible && g.submission.assignment.pointsPossible > 0) {
+            return sum + (g.points / g.submission.assignment.pointsPossible * 100);
+          }
+          return sum;
+        }, 0);
+        averageScore = totalPercentage / studentGrades.length;
+      }
+      
+      // Get course averages
+      const courseMap = new Map<string, { course: any; grades: number[]; total: number; graded: number }>();
+      
+      for (const grade of studentGrades) {
+        const courseId = grade.submission?.assignment?.courseId;
+        if (courseId && grade.submission?.assignment) {
+          if (!courseMap.has(courseId)) {
+            const course = await storage.getCourse(courseId);
+            if (course) {
+              courseMap.set(courseId, { course, grades: [], total: 0, graded: 0 });
+            }
+          }
+          const data = courseMap.get(courseId);
+          if (data && grade.submission.assignment.pointsPossible && grade.submission.assignment.pointsPossible > 0) {
+            const percentage = (grade.points / grade.submission.assignment.pointsPossible) * 100;
+            data.grades.push(percentage);
+            data.graded++;
+          }
+        }
+      }
+      
+      const courseAverages = Array.from(courseMap.values()).map(data => ({
+        course: data.course,
+        average: data.grades.length > 0 ? data.grades.reduce((a, b) => a + b, 0) / data.grades.length : 0,
+        totalAssignments: data.total,
+        gradedAssignments: data.graded,
+      }));
+      
+      res.json({
+        stats: {
+          overallGPA: null,
+          totalGraded: studentGrades.length,
+          averageScore,
+          trend: "stable" as const,
+        },
+        grades: studentGrades,
+        courseAverages,
+      });
+    } catch (error) {
+      console.error("Error fetching student grades:", error);
+      res.status(500).json({ message: "Failed to fetch grades data" });
+    }
+  });
+
+  // ==========================================
+  // DASHBOARD STATS ROUTES (legacy/simple stats)
   // ==========================================
   
   // Get student stats
