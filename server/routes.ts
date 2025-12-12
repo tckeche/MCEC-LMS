@@ -33,7 +33,7 @@ declare global {
   }
 }
 
-// Role-based middleware
+// Role-based middleware with isActive check
 const requireRole = (...roles: UserRole[]) => {
   return async (req: Request, res: Response, next: NextFunction) => {
     const userId = req.user?.claims?.sub;
@@ -46,9 +46,53 @@ const requireRole = (...roles: UserRole[]) => {
       return res.status(403).json({ message: "Forbidden: insufficient permissions" });
     }
     
+    // Check if user account is active
+    if (!user.isActive) {
+      return res.status(403).json({ message: "Account is deactivated" });
+    }
+    
+    // Attach user to request for ownership checks
+    (req as any).dbUser = user;
+    
     next();
   };
 };
+
+// Zod schemas for PATCH validation (allowing partial updates with safe fields only)
+const updateCourseSchema = z.object({
+  title: z.string().min(1).max(255).optional(),
+  description: z.string().optional(),
+  syllabus: z.string().optional(),
+  isActive: z.boolean().optional(),
+  maxEnrollment: z.number().int().positive().optional(),
+  imageUrl: z.string().optional(),
+});
+
+const updateAssignmentSchema = z.object({
+  title: z.string().min(1).max(255).optional(),
+  description: z.string().optional(),
+  instructions: z.string().optional(),
+  dueDate: z.string().datetime().optional(),
+  pointsPossible: z.number().int().positive().optional(),
+  status: z.enum(["draft", "published", "closed"]).optional(),
+});
+
+const updateSubmissionSchema = z.object({
+  content: z.string().optional(),
+  fileUrl: z.string().optional(),
+  status: z.enum(["pending", "submitted", "graded", "late"]).optional(),
+});
+
+const updateAnnouncementSchema = z.object({
+  title: z.string().min(1).max(255).optional(),
+  content: z.string().optional(),
+  isGlobal: z.boolean().optional(),
+});
+
+const updateGradeSchema = z.object({
+  points: z.number().int().min(0).optional(),
+  feedback: z.string().optional(),
+});
 
 export async function registerRoutes(
   httpServer: Server,
@@ -194,15 +238,30 @@ export async function registerRoutes(
     }
   });
 
-  // Update course
+  // Update course (with ownership check for tutors)
   app.patch('/api/courses/:id', isAuthenticated, requireRole("tutor", "admin", "manager"), async (req: Request, res: Response) => {
     try {
-      const course = await storage.updateCourse(req.params.id, req.body);
-      if (!course) {
+      const dbUser = (req as any).dbUser;
+      const existingCourse = await storage.getCourse(req.params.id);
+      
+      if (!existingCourse) {
         return res.status(404).json({ message: "Course not found" });
       }
+      
+      // Tutors can only update their own courses
+      if (dbUser.role === "tutor" && existingCourse.tutorId !== dbUser.id) {
+        return res.status(403).json({ message: "You can only update your own courses" });
+      }
+      
+      // Validate and sanitize input
+      const validated = updateCourseSchema.parse(req.body);
+      
+      const course = await storage.updateCourse(req.params.id, validated);
       res.json(course);
     } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Invalid data", errors: error.errors });
+      }
       console.error("Error updating course:", error);
       res.status(500).json({ message: "Failed to update course" });
     }
@@ -323,9 +382,19 @@ export async function registerRoutes(
     }
   });
 
-  // Create assignment (tutor)
+  // Create assignment (tutor - must own the course)
   app.post('/api/assignments', isAuthenticated, requireRole("tutor", "admin"), async (req: Request, res: Response) => {
     try {
+      const dbUser = (req as any).dbUser;
+      
+      // Tutors can only create assignments for their own courses
+      if (dbUser.role === "tutor") {
+        const course = await storage.getCourse(req.body.courseId);
+        if (!course || course.tutorId !== dbUser.id) {
+          return res.status(403).json({ message: "You can only create assignments for your own courses" });
+        }
+      }
+      
       const validated = insertAssignmentSchema.parse(req.body);
       const assignment = await storage.createAssignment(validated);
       res.status(201).json(assignment);
@@ -338,23 +407,56 @@ export async function registerRoutes(
     }
   });
 
-  // Update assignment
+  // Update assignment (with ownership check for tutors)
   app.patch('/api/assignments/:id', isAuthenticated, requireRole("tutor", "admin"), async (req: Request, res: Response) => {
     try {
-      const assignment = await storage.updateAssignment(req.params.id, req.body);
-      if (!assignment) {
+      const dbUser = (req as any).dbUser;
+      const existingAssignment = await storage.getAssignment(req.params.id);
+      
+      if (!existingAssignment) {
         return res.status(404).json({ message: "Assignment not found" });
       }
+      
+      // Tutors can only update assignments in their own courses
+      if (dbUser.role === "tutor") {
+        const course = await storage.getCourse(existingAssignment.courseId);
+        if (!course || course.tutorId !== dbUser.id) {
+          return res.status(403).json({ message: "You can only update assignments in your own courses" });
+        }
+      }
+      
+      // Validate and sanitize input
+      const validated = updateAssignmentSchema.parse(req.body);
+      
+      const assignment = await storage.updateAssignment(req.params.id, validated);
       res.json(assignment);
     } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Invalid data", errors: error.errors });
+      }
       console.error("Error updating assignment:", error);
       res.status(500).json({ message: "Failed to update assignment" });
     }
   });
 
-  // Delete assignment
+  // Delete assignment (with ownership check for tutors)
   app.delete('/api/assignments/:id', isAuthenticated, requireRole("tutor", "admin"), async (req: Request, res: Response) => {
     try {
+      const dbUser = (req as any).dbUser;
+      const existingAssignment = await storage.getAssignment(req.params.id);
+      
+      if (!existingAssignment) {
+        return res.status(404).json({ message: "Assignment not found" });
+      }
+      
+      // Tutors can only delete assignments in their own courses
+      if (dbUser.role === "tutor") {
+        const course = await storage.getCourse(existingAssignment.courseId);
+        if (!course || course.tutorId !== dbUser.id) {
+          return res.status(403).json({ message: "You can only delete assignments in your own courses" });
+        }
+      }
+      
       await storage.deleteAssignment(req.params.id);
       res.status(204).send();
     } catch (error) {
@@ -415,15 +517,36 @@ export async function registerRoutes(
     }
   });
 
-  // Update submission
+  // Update submission (students can only update their own)
   app.patch('/api/submissions/:id', isAuthenticated, async (req: Request, res: Response) => {
     try {
-      const submission = await storage.updateSubmission(req.params.id, req.body);
-      if (!submission) {
+      const userId = req.user?.claims?.sub;
+      if (!userId) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+      
+      const existingSubmission = await storage.getSubmission(req.params.id);
+      if (!existingSubmission) {
         return res.status(404).json({ message: "Submission not found" });
       }
+      
+      // Students can only update their own submissions
+      if (existingSubmission.studentId !== userId) {
+        const user = await storage.getUser(userId);
+        if (!user || (user.role !== "tutor" && user.role !== "admin")) {
+          return res.status(403).json({ message: "You can only update your own submissions" });
+        }
+      }
+      
+      // Validate and sanitize input
+      const validated = updateSubmissionSchema.parse(req.body);
+      
+      const submission = await storage.updateSubmission(req.params.id, validated);
       res.json(submission);
     } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Invalid data", errors: error.errors });
+      }
       console.error("Error updating submission:", error);
       res.status(500).json({ message: "Failed to update submission" });
     }
@@ -485,15 +608,30 @@ export async function registerRoutes(
     }
   });
 
-  // Update grade
+  // Update grade (tutors can only update their own grades)
   app.patch('/api/grades/:id', isAuthenticated, requireRole("tutor", "admin"), async (req: Request, res: Response) => {
     try {
-      const grade = await storage.updateGrade(req.params.id, req.body);
-      if (!grade) {
+      const dbUser = (req as any).dbUser;
+      const existingGrade = await storage.getGrade(req.params.id);
+      
+      if (!existingGrade) {
         return res.status(404).json({ message: "Grade not found" });
       }
+      
+      // Tutors can only update their own grades
+      if (dbUser.role === "tutor" && existingGrade.gradedById !== dbUser.id) {
+        return res.status(403).json({ message: "You can only update your own grades" });
+      }
+      
+      // Validate and sanitize input
+      const validated = updateGradeSchema.parse(req.body);
+      
+      const grade = await storage.updateGrade(req.params.id, validated);
       res.json(grade);
     } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Invalid data", errors: error.errors });
+      }
       console.error("Error updating grade:", error);
       res.status(500).json({ message: "Failed to update grade" });
     }
@@ -565,15 +703,30 @@ export async function registerRoutes(
     }
   });
 
-  // Update announcement
+  // Update announcement (authors can only update their own, admins/managers can update any)
   app.patch('/api/announcements/:id', isAuthenticated, requireRole("tutor", "admin", "manager"), async (req: Request, res: Response) => {
     try {
-      const announcement = await storage.updateAnnouncement(req.params.id, req.body);
-      if (!announcement) {
+      const dbUser = (req as any).dbUser;
+      const existingAnnouncement = await storage.getAnnouncement(req.params.id);
+      
+      if (!existingAnnouncement) {
         return res.status(404).json({ message: "Announcement not found" });
       }
+      
+      // Tutors can only update their own announcements
+      if (dbUser.role === "tutor" && existingAnnouncement.authorId !== dbUser.id) {
+        return res.status(403).json({ message: "You can only update your own announcements" });
+      }
+      
+      // Validate and sanitize input
+      const validated = updateAnnouncementSchema.parse(req.body);
+      
+      const announcement = await storage.updateAnnouncement(req.params.id, validated);
       res.json(announcement);
     } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Invalid data", errors: error.errors });
+      }
       console.error("Error updating announcement:", error);
       res.status(500).json({ message: "Failed to update announcement" });
     }
