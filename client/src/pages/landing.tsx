@@ -1,0 +1,154 @@
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import {
+  GraduationCap,
+  BookOpen,
+  Users,
+  BarChart3,
+  Shield,
+  Award,
+} from "lucide-react";
+import { ThemeToggle } from "@/components/theme-toggle";
+
+const features = [
+  {
+    icon: BookOpen,
+    title: "Course Management",
+    description:
+      "Create and manage courses with comprehensive syllabi, assignments, and learning materials.",
+  },
+  {
+    icon: Users,
+    title: "Multi-Role Support",
+    description:
+      "Dedicated dashboards for students, parents, tutors, managers, and administrators.",
+  },
+  {
+    icon: BarChart3,
+    title: "Analytics & Insights",
+    description:
+      "Track student progress, grades, and performance with detailed analytics.",
+  },
+  {
+    icon: Shield,
+    title: "Role-Based Access",
+    description:
+      "Secure access controls ensure users only see what they need to see.",
+  },
+  {
+    icon: Award,
+    title: "Grade Book",
+    description:
+      "Comprehensive grading system with feedback and progress tracking.",
+  },
+  {
+    icon: GraduationCap,
+    title: "Parent Portal",
+    description:
+      "Parents can monitor their children's academic progress and stay informed.",
+  },
+];
+
+export default function Landing() {
+  return (
+    <div className="min-h-screen bg-background">
+      <header className="sticky top-0 z-50 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+        <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 md:px-8">
+          <div className="flex items-center gap-2">
+            <GraduationCap className="h-8 w-8 text-primary" />
+            <span className="font-heading text-xl font-bold" data-testid="text-logo">
+              MCEC LMS
+            </span>
+          </div>
+          <div className="flex items-center gap-4">
+            <ThemeToggle />
+            <Button asChild data-testid="button-login">
+              <a href="/api/login">Sign In</a>
+            </Button>
+          </div>
+        </div>
+      </header>
+
+      <main>
+        <section className="relative overflow-hidden py-20 md:py-32">
+          <div className="absolute inset-0 bg-gradient-to-br from-primary/5 via-transparent to-primary/10" />
+          <div className="relative mx-auto max-w-7xl px-4 text-center md:px-8">
+            <h1 className="font-heading text-4xl font-bold tracking-tight md:text-6xl" data-testid="text-hero-title">
+              Learning Management
+              <br />
+              <span className="text-primary">Made Simple</span>
+            </h1>
+            <p className="mx-auto mt-6 max-w-2xl text-lg text-muted-foreground md:text-xl" data-testid="text-hero-description">
+              A comprehensive platform for educational institutions to manage
+              courses, track student progress, and empower learning outcomes.
+            </p>
+            <div className="mt-10 flex flex-col items-center justify-center gap-4 sm:flex-row">
+              <Button size="lg" asChild data-testid="button-get-started">
+                <a href="/api/login">Get Started</a>
+              </Button>
+              <Button size="lg" variant="outline" asChild data-testid="button-learn-more">
+                <a href="#features">Learn More</a>
+              </Button>
+            </div>
+          </div>
+        </section>
+
+        <section id="features" className="border-t py-20 md:py-32">
+          <div className="mx-auto max-w-7xl px-4 md:px-8">
+            <div className="text-center">
+              <h2 className="font-heading text-3xl font-bold md:text-4xl" data-testid="text-features-title">
+                Everything You Need
+              </h2>
+              <p className="mt-4 text-lg text-muted-foreground">
+                Powerful features designed for modern educational institutions.
+              </p>
+            </div>
+            <div className="mt-16 grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+              {features.map((feature, index) => (
+                <Card
+                  key={feature.title}
+                  className="hover-elevate"
+                  data-testid={`card-feature-${index}`}
+                >
+                  <CardContent className="p-6">
+                    <div className="flex h-12 w-12 items-center justify-center rounded-md bg-primary/10 text-primary">
+                      <feature.icon className="h-6 w-6" />
+                    </div>
+                    <h3 className="mt-4 font-heading text-lg font-semibold">
+                      {feature.title}
+                    </h3>
+                    <p className="mt-2 text-sm text-muted-foreground">
+                      {feature.description}
+                    </p>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        <section className="border-t bg-muted/30 py-20 md:py-32">
+          <div className="mx-auto max-w-7xl px-4 text-center md:px-8">
+            <h2 className="font-heading text-3xl font-bold md:text-4xl" data-testid="text-cta-title">
+              Ready to Get Started?
+            </h2>
+            <p className="mt-4 text-lg text-muted-foreground">
+              Join MCEC LMS today and transform your educational experience.
+            </p>
+            <Button size="lg" className="mt-8" asChild data-testid="button-cta-signin">
+              <a href="/api/login">Sign In Now</a>
+            </Button>
+          </div>
+        </section>
+      </main>
+
+      <footer className="border-t py-8">
+        <div className="mx-auto max-w-7xl px-4 text-center text-sm text-muted-foreground md:px-8">
+          <p data-testid="text-footer">
+            &copy; {new Date().getFullYear()} MCEC LMS. All rights reserved.
+          </p>
+        </div>
+      </footer>
+    </div>
+  );
+}
