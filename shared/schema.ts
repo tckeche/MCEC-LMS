@@ -43,6 +43,15 @@ export const enrollmentStatusEnum = pgEnum("enrollment_status", [
   "pending",
 ]);
 
+export const notificationTypeEnum = pgEnum("notification_type", [
+  "grade_posted",
+  "assignment_due",
+  "announcement",
+  "enrollment",
+  "submission",
+  "system",
+]);
+
 // Session storage table (mandatory for Replit Auth)
 export const sessions = pgTable(
   "sessions",
@@ -172,6 +181,21 @@ export const announcements = pgTable("announcements", {
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
+// Notifications table
+export const notifications = pgTable("notifications", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  type: notificationTypeEnum("type").notNull(),
+  title: varchar("title", { length: 255 }).notNull(),
+  message: text("message").notNull(),
+  link: varchar("link"),
+  isRead: boolean("is_read").default(false).notNull(),
+  relatedId: varchar("related_id"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
 // Relations
 export const usersRelations = relations(users, ({ many }) => ({
   courses: many(courses),
@@ -179,6 +203,7 @@ export const usersRelations = relations(users, ({ many }) => ({
   submissions: many(submissions),
   grades: many(grades),
   announcements: many(announcements),
+  notifications: many(notifications),
   parentOf: many(parentChildren, { relationName: "parent" }),
   childOf: many(parentChildren, { relationName: "child" }),
 }));
@@ -259,6 +284,13 @@ export const announcementsRelations = relations(announcements, ({ one }) => ({
   }),
 }));
 
+export const notificationsRelations = relations(notifications, ({ one }) => ({
+  user: one(users, {
+    fields: [notifications.userId],
+    references: [users.id],
+  }),
+}));
+
 // Insert schemas
 export const insertUserSchema = createInsertSchema(users).omit({
   id: true,
@@ -306,6 +338,11 @@ export const insertParentChildSchema = createInsertSchema(parentChildren).omit({
   createdAt: true,
 });
 
+export const insertNotificationSchema = createInsertSchema(notifications).omit({
+  id: true,
+  createdAt: true,
+});
+
 // Types
 export type UpsertUser = typeof users.$inferInsert;
 export type User = typeof users.$inferSelect;
@@ -331,6 +368,11 @@ export type InsertAnnouncement = z.infer<typeof insertAnnouncementSchema>;
 
 export type ParentChild = typeof parentChildren.$inferSelect;
 export type InsertParentChild = z.infer<typeof insertParentChildSchema>;
+
+export type Notification = typeof notifications.$inferSelect;
+export type InsertNotification = z.infer<typeof insertNotificationSchema>;
+
+export type NotificationType = "grade_posted" | "assignment_due" | "announcement" | "enrollment" | "submission" | "system";
 
 // Extended types for frontend use
 export type CourseWithTutor = Course & {

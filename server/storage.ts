@@ -8,6 +8,7 @@ import {
   grades,
   announcements,
   parentChildren,
+  notifications,
   type User,
   type UpsertUser,
   type Course,
@@ -24,6 +25,8 @@ import {
   type InsertAnnouncement,
   type ParentChild,
   type InsertParentChild,
+  type Notification,
+  type InsertNotification,
   type CourseWithTutor,
   type CourseWithEnrollmentCount,
   type EnrollmentWithDetails,
@@ -121,6 +124,17 @@ export interface IStorage {
     totalUsers: number;
     usersByRole: Record<UserRole, number>;
   }>;
+  
+  // Notification operations
+  getNotificationsByUser(userId: string, limit?: number): Promise<Notification[]>;
+  getUnreadNotificationCount(userId: string): Promise<number>;
+  createNotification(notification: InsertNotification): Promise<Notification>;
+  markNotificationAsRead(id: string, userId: string): Promise<Notification | undefined>;
+  markAllNotificationsAsRead(userId: string): Promise<void>;
+  deleteNotification(id: string, userId: string): Promise<boolean>;
+  
+  // Helper to get enrolled students for a course (for notifications)
+  getEnrolledStudentIds(courseId: string): Promise<string[]>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -809,6 +823,67 @@ export class DatabaseStorage implements IStorage {
       totalUsers: Number(totalCount?.count || 0),
       usersByRole,
     };
+  }
+
+  // Notification operations
+  async getNotificationsByUser(userId: string, limit: number = 50): Promise<Notification[]> {
+    return db
+      .select()
+      .from(notifications)
+      .where(eq(notifications.userId, userId))
+      .orderBy(desc(notifications.createdAt))
+      .limit(limit);
+  }
+
+  async getUnreadNotificationCount(userId: string): Promise<number> {
+    const [result] = await db
+      .select({ count: count() })
+      .from(notifications)
+      .where(and(
+        eq(notifications.userId, userId),
+        eq(notifications.isRead, false)
+      ));
+    return Number(result?.count || 0);
+  }
+
+  async createNotification(notification: InsertNotification): Promise<Notification> {
+    const [newNotification] = await db.insert(notifications).values(notification).returning();
+    return newNotification;
+  }
+
+  async markNotificationAsRead(id: string, userId: string): Promise<Notification | undefined> {
+    const [updated] = await db
+      .update(notifications)
+      .set({ isRead: true })
+      .where(and(eq(notifications.id, id), eq(notifications.userId, userId)))
+      .returning();
+    return updated;
+  }
+
+  async markAllNotificationsAsRead(userId: string): Promise<void> {
+    await db
+      .update(notifications)
+      .set({ isRead: true })
+      .where(eq(notifications.userId, userId));
+  }
+
+  async deleteNotification(id: string, userId: string): Promise<boolean> {
+    const result = await db
+      .delete(notifications)
+      .where(and(eq(notifications.id, id), eq(notifications.userId, userId)))
+      .returning();
+    return result.length > 0;
+  }
+
+  async getEnrolledStudentIds(courseId: string): Promise<string[]> {
+    const result = await db
+      .select({ studentId: enrollments.studentId })
+      .from(enrollments)
+      .where(and(
+        eq(enrollments.courseId, courseId),
+        eq(enrollments.status, "active")
+      ));
+    return result.map(r => r.studentId);
   }
 }
 

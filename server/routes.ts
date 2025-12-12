@@ -598,6 +598,26 @@ export async function registerRoutes(
         gradedById: tutorId,
       });
       const grade = await storage.createGrade(validated);
+      
+      // Trigger notification for the student
+      try {
+        const submission = await storage.getSubmission(validated.submissionId);
+        if (submission) {
+          const assignment = await storage.getAssignment(submission.assignmentId);
+          await storage.createNotification({
+            userId: submission.studentId,
+            type: "grade_posted",
+            title: "Grade Posted",
+            message: `Your submission for "${assignment?.title || 'an assignment'}" has been graded. You received ${validated.points} points.`,
+            link: "/grades",
+            isRead: false,
+            relatedId: grade.id,
+          });
+        }
+      } catch (notifError) {
+        console.error("Error creating grade notification:", notifError);
+      }
+      
       res.status(201).json(grade);
     } catch (error) {
       if (error instanceof z.ZodError) {
@@ -693,6 +713,27 @@ export async function registerRoutes(
         authorId,
       });
       const announcement = await storage.createAnnouncement(validated);
+      
+      // Trigger notifications for enrolled students
+      try {
+        if (validated.courseId) {
+          const studentIds = await storage.getEnrolledStudentIds(validated.courseId);
+          for (const studentId of studentIds) {
+            await storage.createNotification({
+              userId: studentId,
+              type: "announcement",
+              title: "New Announcement",
+              message: validated.title,
+              link: "/announcements",
+              isRead: false,
+              relatedId: announcement.id,
+            });
+          }
+        }
+      } catch (notifError) {
+        console.error("Error creating announcement notifications:", notifError);
+      }
+      
       res.status(201).json(announcement);
     } catch (error) {
       if (error instanceof z.ZodError) {
@@ -1171,6 +1212,92 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Error fetching admin stats:", error);
       res.status(500).json({ message: "Failed to fetch stats" });
+    }
+  });
+
+  // ==========================================
+  // NOTIFICATION ROUTES
+  // ==========================================
+  
+  // Get user's notifications
+  app.get('/api/notifications', isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const userId = req.user?.claims?.sub;
+      if (!userId) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+      const limit = parseInt(req.query.limit as string) || 50;
+      const notifications = await storage.getNotificationsByUser(userId, limit);
+      res.json(notifications);
+    } catch (error) {
+      console.error("Error fetching notifications:", error);
+      res.status(500).json({ message: "Failed to fetch notifications" });
+    }
+  });
+
+  // Get unread notification count
+  app.get('/api/notifications/unread-count', isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const userId = req.user?.claims?.sub;
+      if (!userId) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+      const count = await storage.getUnreadNotificationCount(userId);
+      res.json({ count });
+    } catch (error) {
+      console.error("Error fetching unread count:", error);
+      res.status(500).json({ message: "Failed to fetch unread count" });
+    }
+  });
+
+  // Mark notification as read
+  app.patch('/api/notifications/:id/read', isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const userId = req.user?.claims?.sub;
+      if (!userId) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+      const notification = await storage.markNotificationAsRead(req.params.id, userId);
+      if (!notification) {
+        return res.status(404).json({ message: "Notification not found" });
+      }
+      res.json(notification);
+    } catch (error) {
+      console.error("Error marking notification as read:", error);
+      res.status(500).json({ message: "Failed to mark as read" });
+    }
+  });
+
+  // Mark all notifications as read
+  app.patch('/api/notifications/read-all', isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const userId = req.user?.claims?.sub;
+      if (!userId) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+      await storage.markAllNotificationsAsRead(userId);
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error marking all as read:", error);
+      res.status(500).json({ message: "Failed to mark all as read" });
+    }
+  });
+
+  // Delete notification
+  app.delete('/api/notifications/:id', isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const userId = req.user?.claims?.sub;
+      if (!userId) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+      const deleted = await storage.deleteNotification(req.params.id, userId);
+      if (!deleted) {
+        return res.status(404).json({ message: "Notification not found" });
+      }
+      res.status(204).send();
+    } catch (error) {
+      console.error("Error deleting notification:", error);
+      res.status(500).json({ message: "Failed to delete notification" });
     }
   });
 
