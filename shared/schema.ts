@@ -52,6 +52,22 @@ export const notificationTypeEnum = pgEnum("notification_type", [
   "system",
 ]);
 
+// Scheduling system enums
+export const proposalStatusEnum = pgEnum("proposal_status", [
+  "pending",
+  "approved",
+  "rejected",
+]);
+
+export const tutoringSessionStatusEnum = pgEnum("tutoring_session_status", [
+  "scheduled",
+  "in_progress",
+  "completed",
+  "missed",
+  "postponed",
+  "cancelled",
+]);
+
 // Session storage table (mandatory for Replit Auth)
 export const sessions = pgTable(
   "sessions",
@@ -196,6 +212,84 @@ export const notifications = pgTable("notifications", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
+// ==========================================
+// SCHEDULING SYSTEM TABLES
+// ==========================================
+
+// Tutor Availability (weekly recurring slots)
+export const tutorAvailability = pgTable("tutor_availability", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  tutorId: varchar("tutor_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  dayOfWeek: integer("day_of_week").notNull(),
+  startTime: varchar("start_time", { length: 5 }).notNull(),
+  endTime: varchar("end_time", { length: 5 }).notNull(),
+  isActive: boolean("is_active").default(true).notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+// Session Proposals (student requests awaiting tutor approval)
+export const sessionProposals = pgTable("session_proposals", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  studentId: varchar("student_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  tutorId: varchar("tutor_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  courseId: varchar("course_id")
+    .notNull()
+    .references(() => courses.id, { onDelete: "cascade" }),
+  proposedStartTime: timestamp("proposed_start_time").notNull(),
+  proposedEndTime: timestamp("proposed_end_time").notNull(),
+  status: proposalStatusEnum("status").default("pending").notNull(),
+  studentMessage: text("student_message"),
+  tutorResponse: text("tutor_response"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+// Tutoring Sessions (confirmed/scheduled sessions)
+export const tutoringSessions = pgTable("tutoring_sessions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  studentId: varchar("student_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  tutorId: varchar("tutor_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  courseId: varchar("course_id")
+    .notNull()
+    .references(() => courses.id, { onDelete: "cascade" }),
+  scheduledStartTime: timestamp("scheduled_start_time").notNull(),
+  scheduledEndTime: timestamp("scheduled_end_time").notNull(),
+  actualStartTime: timestamp("actual_start_time"),
+  actualEndTime: timestamp("actual_end_time"),
+  studentJoinTime: timestamp("student_join_time"),
+  tutorJoinTime: timestamp("tutor_join_time"),
+  status: tutoringSessionStatusEnum("status").default("scheduled").notNull(),
+  tutorLate: boolean("tutor_late").default(false).notNull(),
+  billableDuration: integer("billable_duration"),
+  isRecurring: boolean("is_recurring").default(false).notNull(),
+  recurrenceGroupId: varchar("recurrence_group_id"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+// Hour Wallets (purchased hours per student-course)
+export const hourWallets = pgTable("hour_wallets", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  studentId: varchar("student_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  courseId: varchar("course_id")
+    .notNull()
+    .references(() => courses.id, { onDelete: "cascade" }),
+  purchasedMinutes: integer("purchased_minutes").default(0).notNull(),
+  consumedMinutes: integer("consumed_minutes").default(0).notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
 // Relations
 export const usersRelations = relations(users, ({ many }) => ({
   courses: many(courses),
@@ -291,6 +385,59 @@ export const notificationsRelations = relations(notifications, ({ one }) => ({
   }),
 }));
 
+// Scheduling system relations
+export const tutorAvailabilityRelations = relations(tutorAvailability, ({ one }) => ({
+  tutor: one(users, {
+    fields: [tutorAvailability.tutorId],
+    references: [users.id],
+  }),
+}));
+
+export const sessionProposalsRelations = relations(sessionProposals, ({ one }) => ({
+  student: one(users, {
+    fields: [sessionProposals.studentId],
+    references: [users.id],
+    relationName: "proposalStudent",
+  }),
+  tutor: one(users, {
+    fields: [sessionProposals.tutorId],
+    references: [users.id],
+    relationName: "proposalTutor",
+  }),
+  course: one(courses, {
+    fields: [sessionProposals.courseId],
+    references: [courses.id],
+  }),
+}));
+
+export const tutoringSessionsRelations = relations(tutoringSessions, ({ one }) => ({
+  student: one(users, {
+    fields: [tutoringSessions.studentId],
+    references: [users.id],
+    relationName: "sessionStudent",
+  }),
+  tutor: one(users, {
+    fields: [tutoringSessions.tutorId],
+    references: [users.id],
+    relationName: "sessionTutor",
+  }),
+  course: one(courses, {
+    fields: [tutoringSessions.courseId],
+    references: [courses.id],
+  }),
+}));
+
+export const hourWalletsRelations = relations(hourWallets, ({ one }) => ({
+  student: one(users, {
+    fields: [hourWallets.studentId],
+    references: [users.id],
+  }),
+  course: one(courses, {
+    fields: [hourWallets.courseId],
+    references: [courses.id],
+  }),
+}));
+
 // Insert schemas
 export const insertUserSchema = createInsertSchema(users).omit({
   id: true,
@@ -341,6 +488,28 @@ export const insertParentChildSchema = createInsertSchema(parentChildren).omit({
 export const insertNotificationSchema = createInsertSchema(notifications).omit({
   id: true,
   createdAt: true,
+});
+
+// Scheduling system insert schemas
+export const insertTutorAvailabilitySchema = createInsertSchema(tutorAvailability).omit({
+  id: true,
+  createdAt: true,
+});
+
+export const insertSessionProposalSchema = createInsertSchema(sessionProposals).omit({
+  id: true,
+  createdAt: true,
+});
+
+export const insertTutoringSessionSchema = createInsertSchema(tutoringSessions).omit({
+  id: true,
+  createdAt: true,
+});
+
+export const insertHourWalletSchema = createInsertSchema(hourWallets).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
 });
 
 // Types
@@ -418,3 +587,37 @@ export type ParentChildWithDetails = ParentChild & {
 
 // User role type for type safety
 export type UserRole = "student" | "parent" | "tutor" | "manager" | "admin";
+
+// Scheduling system types
+export type TutorAvailability = typeof tutorAvailability.$inferSelect;
+export type InsertTutorAvailability = z.infer<typeof insertTutorAvailabilitySchema>;
+
+export type SessionProposal = typeof sessionProposals.$inferSelect;
+export type InsertSessionProposal = z.infer<typeof insertSessionProposalSchema>;
+
+export type TutoringSession = typeof tutoringSessions.$inferSelect;
+export type InsertTutoringSession = z.infer<typeof insertTutoringSessionSchema>;
+
+export type HourWallet = typeof hourWallets.$inferSelect;
+export type InsertHourWallet = z.infer<typeof insertHourWalletSchema>;
+
+export type ProposalStatus = "pending" | "approved" | "rejected";
+export type TutoringSessionStatus = "scheduled" | "in_progress" | "completed" | "missed" | "postponed" | "cancelled";
+
+// Extended types for scheduling
+export type SessionProposalWithDetails = SessionProposal & {
+  student: User;
+  tutor: User;
+  course: Course;
+};
+
+export type TutoringSessionWithDetails = TutoringSession & {
+  student: User;
+  tutor: User;
+  course: Course;
+};
+
+export type HourWalletWithDetails = HourWallet & {
+  student: User;
+  course: Course;
+};
