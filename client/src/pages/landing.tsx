@@ -9,7 +9,10 @@ import {
   GraduationCap,
 } from "lucide-react";
 import { ThemeToggle } from "@/components/theme-toggle";
-import mcecLogo from "@assets/MCEC_Transparent_Logo_1765613479714.png";
+import mcecLogo from "@assets/MCEC_Transparent_Logo_1765615854771.jpg";
+import teamImage from "@assets/IMG_8885_1765615332523.jpg";
+import studentLaptopImage from "@assets/IMG_9484_1765615416395.jpg";
+import videoCallImage from "@assets/IMG_9136_1765615423730.jpg";
 
 const features = [
   {
@@ -69,7 +72,11 @@ export default function Landing() {
 
       <main>
         <section className="relative overflow-hidden py-20 md:py-32">
-          <div className="absolute inset-0 bg-gradient-to-br from-primary/20 via-transparent to-primary/10" />
+          <div 
+            className="absolute inset-0 bg-cover bg-center"
+            style={{ backgroundImage: `url(${teamImage})` }}
+          />
+          <div className="absolute inset-0 bg-gradient-to-r from-background via-background/80 to-background/60" />
           <div className="relative mx-auto max-w-7xl px-4 text-center md:px-8">
             <h1 className="font-tagline text-4xl font-bold tracking-tight md:text-6xl" data-testid="text-hero-title">
               Melania Calvin
@@ -120,6 +127,27 @@ export default function Landing() {
                   </CardContent>
                 </Card>
               ))}
+            </div>
+          </div>
+        </section>
+
+        <section className="border-t bg-muted/20 py-20 md:py-32">
+          <div className="mx-auto max-w-7xl px-4 md:px-8">
+            <div className="text-center mb-16">
+              <h2 className="font-heading text-3xl font-bold md:text-4xl" data-testid="text-showcase-title">
+                See It in Action
+              </h2>
+              <p className="mt-4 text-lg text-muted-foreground">
+                Real stories from students and educators using MELANIA CALVIN
+              </p>
+            </div>
+            <div className="grid gap-8 md:grid-cols-2">
+              <div className="rounded-md overflow-hidden" data-testid="image-showcase-1">
+                <img src={studentLaptopImage} alt="Student learning" className="w-full h-64 object-cover hover-elevate" />
+              </div>
+              <div className="rounded-md overflow-hidden" data-testid="image-showcase-2">
+                <img src={videoCallImage} alt="Video call learning" className="w-full h-64 object-cover hover-elevate" />
+              </div>
             </div>
           </div>
         </section>
