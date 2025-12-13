@@ -30,7 +30,7 @@ Preferred communication style: Simple, everyday language.
 - **Database**: PostgreSQL with Drizzle ORM
 - **Schema Location**: `shared/schema.ts` contains all table definitions and type exports
 - **Migrations**: Drizzle Kit for schema migrations (`drizzle-kit push`)
-- **Key Tables**: users, courses, enrollments, assignments, submissions, grades, announcements, parentChildren, sessions
+- **Key Tables**: users, courses, enrollments, assignments, submissions, grades, announcements, parentChildren, sessions, tutorAvailability, sessionProposals, tutoringSessions, hourWallets
 
 ### Authentication & Authorization
 - **Auth Provider**: Replit Auth (OpenID Connect)
