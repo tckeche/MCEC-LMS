@@ -89,6 +89,10 @@ import {
   type InsertStaffRoleRequest,
   type StaffRoleRequestWithDetails,
   type UserStatus,
+  auditLogs,
+  type AuditLog,
+  type InsertAuditLog,
+  type AuditLogWithDetails,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, and, desc, count, sql, inArray, or, gte, lte, ne } from "drizzle-orm";
@@ -314,6 +318,20 @@ export interface IStorage {
   getUserByPhone(phoneNumber: string): Promise<User | undefined>;
   updateUserForStaffSignup(id: string, data: { status: UserStatus; authProvider: string; proposedRole: UserRole; role: UserRole; passwordHash?: string }): Promise<User | undefined>;
   updateUserForPhoneSignup(id: string, data: { phoneNumber: string; role: UserRole; authProvider: string; status: UserStatus }): Promise<User | undefined>;
+  
+  // ==========================================
+  // SUPER ADMIN OPERATIONS
+  // ==========================================
+  
+  // Super Admin user management
+  updateUserSuperAdmin(id: string, isSuperAdmin: boolean): Promise<User | undefined>;
+  updateUserAdminLevel(id: string, adminLevel: number): Promise<User | undefined>;
+  updateUserFull(id: string, data: { role?: UserRole; adminLevel?: number; isSuperAdmin?: boolean; isActive?: boolean; status?: UserStatus }): Promise<User | undefined>;
+  
+  // Audit log operations
+  createAuditLog(log: InsertAuditLog): Promise<AuditLog>;
+  getAuditLogs(limit?: number): Promise<AuditLogWithDetails[]>;
+  getAuditLogsByUser(userId: string): Promise<AuditLogWithDetails[]>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -1972,6 +1990,79 @@ export class DatabaseStorage implements IStorage {
       updatedAt: new Date(),
     }).where(eq(users.id, id)).returning();
     return user;
+  }
+
+  // ==========================================
+  // SUPER ADMIN OPERATIONS
+  // ==========================================
+
+  async updateUserSuperAdmin(id: string, isSuperAdmin: boolean): Promise<User | undefined> {
+    const [user] = await db
+      .update(users)
+      .set({ isSuperAdmin, updatedAt: new Date() })
+      .where(eq(users.id, id))
+      .returning();
+    return user;
+  }
+
+  async updateUserAdminLevel(id: string, adminLevel: number): Promise<User | undefined> {
+    const [user] = await db
+      .update(users)
+      .set({ adminLevel, updatedAt: new Date() })
+      .where(eq(users.id, id))
+      .returning();
+    return user;
+  }
+
+  async updateUserFull(id: string, data: { role?: UserRole; adminLevel?: number; isSuperAdmin?: boolean; isActive?: boolean; status?: UserStatus }): Promise<User | undefined> {
+    const updateData: any = { updatedAt: new Date() };
+    if (data.role !== undefined) updateData.role = data.role;
+    if (data.adminLevel !== undefined) updateData.adminLevel = data.adminLevel;
+    if (data.isSuperAdmin !== undefined) updateData.isSuperAdmin = data.isSuperAdmin;
+    if (data.isActive !== undefined) updateData.isActive = data.isActive;
+    if (data.status !== undefined) updateData.status = data.status;
+    
+    const [user] = await db
+      .update(users)
+      .set(updateData)
+      .where(eq(users.id, id))
+      .returning();
+    return user;
+  }
+
+  async createAuditLog(log: InsertAuditLog): Promise<AuditLog> {
+    const [auditLog] = await db.insert(auditLogs).values(log).returning();
+    return auditLog;
+  }
+
+  async getAuditLogs(limit: number = 100): Promise<AuditLogWithDetails[]> {
+    const result = await db
+      .select()
+      .from(auditLogs)
+      .innerJoin(users, eq(auditLogs.performedById, users.id))
+      .orderBy(desc(auditLogs.createdAt))
+      .limit(limit);
+    
+    return result.map(r => ({
+      ...r.audit_logs,
+      performedBy: r.users,
+      targetUser: undefined,
+    }));
+  }
+
+  async getAuditLogsByUser(userId: string): Promise<AuditLogWithDetails[]> {
+    const result = await db
+      .select()
+      .from(auditLogs)
+      .innerJoin(users, eq(auditLogs.performedById, users.id))
+      .where(eq(auditLogs.targetUserId, userId))
+      .orderBy(desc(auditLogs.createdAt));
+    
+    return result.map(r => ({
+      ...r.audit_logs,
+      performedBy: r.users,
+      targetUser: undefined,
+    }));
   }
 }
 

@@ -143,9 +143,25 @@ export const users = pgTable("users", {
   pendingNotes: text("pending_notes"),
   phoneNumber: varchar("phone_number"),
   adminLevel: integer("admin_level").default(1),
+  isSuperAdmin: boolean("is_super_admin").default(false).notNull(),
   passwordHash: text("password_hash"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Audit Logs table (for tracking Super Admin actions)
+export const auditLogs = pgTable("audit_logs", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  performedById: varchar("performed_by_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  targetUserId: varchar("target_user_id")
+    .references(() => users.id, { onDelete: "set null" }),
+  action: varchar("action", { length: 100 }).notNull(),
+  previousValue: text("previous_value"),
+  newValue: text("new_value"),
+  metadata: jsonb("metadata"),
+  createdAt: timestamp("created_at").defaultNow(),
 });
 
 // Staff Role Requests (for tracking approval workflow)
@@ -967,6 +983,20 @@ export type InsertStaffRoleRequest = z.infer<typeof insertStaffRoleRequestSchema
 export type StaffRoleRequestWithDetails = StaffRoleRequest & {
   user: User;
   reviewedBy?: User;
+};
+
+// Audit Log types
+export const insertAuditLogSchema = createInsertSchema(auditLogs).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type AuditLog = typeof auditLogs.$inferSelect;
+export type InsertAuditLog = z.infer<typeof insertAuditLogSchema>;
+
+export type AuditLogWithDetails = AuditLog & {
+  performedBy: User;
+  targetUser?: User;
 };
 
 // Scheduling system types
