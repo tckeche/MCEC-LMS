@@ -68,7 +68,7 @@ export default function Landing() {
           <div className="flex items-center gap-4">
             <ThemeToggle />
             <Button asChild data-testid="button-login">
-              <a href="/api/login">Sign In</a>
+              <Link href="/auth/login">Sign In</Link>
             </Button>
           </div>
         </div>
@@ -107,7 +107,7 @@ export default function Landing() {
                     Already have an account? Sign in to access your dashboard.
                   </CardDescription>
                   <Button className="w-full" asChild data-testid="button-auth-login">
-                    <a href="/api/login">Sign In</a>
+                    <Link href="/auth/login">Sign In</Link>
                   </Button>
                 </CardContent>
               </Card>
@@ -145,7 +145,7 @@ export default function Landing() {
                     Staff member? Sign up with your @melaniacalvin.com email.
                   </CardDescription>
                   <Button className="w-full" variant="outline" asChild data-testid="button-auth-staff-signup">
-                    <a href="/api/login/microsoft">Staff Sign Up</a>
+                    <Link href="/auth/staff-login">Staff Sign In</Link>
                   </Button>
                 </CardContent>
               </Card>
@@ -224,7 +224,7 @@ export default function Landing() {
             </p>
             <div className="mt-8 flex flex-col items-center justify-center gap-4 sm:flex-row">
               <Button size="lg" asChild data-testid="button-cta-signin">
-                <a href="/api/login">Sign In</a>
+                <Link href="/auth/login">Sign In</Link>
               </Button>
               <Button size="lg" variant="outline" asChild data-testid="button-cta-signup">
                 <Link href="/auth/parent-signup">Create Account</Link>
