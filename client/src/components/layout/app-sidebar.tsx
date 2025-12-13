@@ -126,6 +126,12 @@ const navItems: NavItem[] = [
     roles: ["admin"],
   },
   {
+    title: "Invoices",
+    url: "/admin/invoices",
+    icon: FileText,
+    roles: ["admin"],
+  },
+  {
     title: "All Courses",
     url: "/admin/courses",
     icon: BookOpen,
