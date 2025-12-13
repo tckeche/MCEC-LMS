@@ -1,0 +1,103 @@
+STOP ALL OTHER WORK. FIX AUTH STABILITY + DISABLE STUDENT OTP.
+
+We are in controlled rollout mode. Do NOT add features. Do NOT refactor unrelated code.
+
+========================
+PART 1: LOGIN MUST BE STABLE
+========================
+
+Login is only considered FIXED if ALL of the following are true:
+
+1) Login returns 200
+2) Session cookie is set server-side
+3) User is redirected into the app via FULL page reload (window.location.href)
+4) Refresh preserves login
+5) No code accesses user.role before auth hydration completes
+6) Logout clears the session and refresh does not auto-login again
+
+MANDATORY CHECKS:
+
+A) Backend
+- Identify session cookie name
+- Confirm where it is created and destroyed
+- Ensure httpOnly = true
+- Ensure session survives refresh
+
+B) Frontend
+- On app load, fetch /api/me (or equivalent)
+- Maintain explicit authLoading state
+- NEVER access user.role unless authLoading === false AND user exists
+- Protected routes must follow:
+  if (authLoading) show spinner
+  if (!user) redirect to login
+  else allow
+
+C) Redirect logic
+- Login success MUST invalidate auth cache and then perform a FULL page reload
+- No in-memory redirect using partially hydrated state
+
+DELIVERABLES REQUIRED FOR PART 1:
+- File paths where auth hydration and redirect logic live
+- Confirmation that login → refresh → logout all work correctly
+
+========================
+PART 2: TEMPORARILY DISABLE STUDENT OTP COMPLETELY
+========================
+
+Requirement:
+Students and parents must be able to SIGN UP and LOG IN using EMAIL + PASSWORD ONLY.
+NO OTP. NO phone verification. NO Twilio dependency.
+
+MANDATORY IMPLEMENTATION:
+
+1) Backend-only bypass (frontend toggles are insufficient).
+
+2) In ALL student/parent auth handlers:
+   - signup
+   - login
+   - verify
+   - any OTP middleware
+
+   Short-circuit OTP logic:
+
+   IF otpFallbackEnabled === true:
+     - skip OTP generation
+     - skip OTP verification
+     - mark user as verified immediately
+     - proceed with session creation
+
+3) Database rules:
+   - users.phone_verified = true by default for students/parents
+   - phone number must NOT be required
+
+4) Frontend:
+   - Remove OTP screens from student/parent flows
+   - Login/signup must go straight to dashboard
+
+5) Explicitly mark bypass with comment:
+   // TEMP: OTP DISABLED UNTIL TWILIO IS CONFIGURED
+
+6) Staff auth remains unchanged.
+
+DELIVERABLES REQUIRED FOR PART 2:
+- File paths where OTP was bypassed
+- Confirmation that:
+  • student signup works without OTP
+  • student login works without OTP
+  • refresh keeps student logged in
+- Confirmation OTP can be re-enabled later with a single flag
+
+========================
+CONSTRAINTS
+========================
+
+DO NOT:
+- touch scheduling
+- touch finance
+- add features
+- republish until BOTH parts are verified
+
+Reply ONLY after:
+- login is fully stable
+- student OTP is fully disabled
+- you list the files changed for both parts
