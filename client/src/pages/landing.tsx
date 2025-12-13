@@ -76,14 +76,15 @@ export default function Landing() {
             className="absolute inset-0 bg-cover bg-center"
             style={{ backgroundImage: `url(${teamImage})` }}
           />
-          <div className="absolute inset-0 bg-gradient-to-r from-background via-background/80 to-background/60" />
+          <div className="absolute inset-0 bg-black/40" />
+          <div className="absolute inset-0 bg-gradient-to-r from-background via-background/95 to-background/85" />
           <div className="relative mx-auto max-w-7xl px-4 text-center md:px-8">
-            <h1 className="font-tagline text-4xl font-bold tracking-tight md:text-6xl" data-testid="text-hero-title">
+            <h1 className="font-tagline text-4xl font-bold tracking-tight md:text-6xl text-foreground" data-testid="text-hero-title">
               Melania Calvin
               <br />
               <span className="text-primary">Educational Consultants</span>
             </h1>
-            <p className="mx-auto mt-6 max-w-2xl text-lg text-muted-foreground md:text-xl" data-testid="text-hero-description">
+            <p className="mx-auto mt-6 max-w-2xl text-lg text-foreground md:text-xl" data-testid="text-hero-description">
               A comprehensive learning management platform designed by MELANIA CALVIN to help students succeed, support parents in their children's education, and empower tutors to deliver exceptional results.
             </p>
             <div className="mt-10 flex flex-col items-center justify-center gap-4 sm:flex-row">
