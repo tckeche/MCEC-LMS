@@ -80,6 +80,7 @@ const updateCourseSchema = z.object({
   isActive: z.boolean().optional(),
   maxEnrollment: z.number().int().positive().optional(),
   imageUrl: z.string().optional(),
+  teamsMeetingLink: z.string().nullable().optional(),
 });
 
 const updateAssignmentSchema = z.object({

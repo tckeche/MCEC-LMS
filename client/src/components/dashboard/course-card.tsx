@@ -2,7 +2,7 @@ import { Card, CardContent, CardFooter } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { Users, BookOpen } from "lucide-react";
+import { Users, BookOpen, Video } from "lucide-react";
 import { Link } from "wouter";
 import type { CourseWithTutor } from "@shared/schema";
 
@@ -73,20 +73,36 @@ export function CourseCard({
           </div>
         )}
       </CardContent>
-      <CardFooter className="flex gap-2 border-t p-4">
-        <Button asChild variant="outline" className="flex-1" data-testid={`${testId}-view`}>
-          <Link href={`/courses/${course.id}`}>View Course</Link>
-        </Button>
-        {showEnrollButton && (
-          <Button onClick={onEnroll} className="flex-1" data-testid={`${testId}-enroll`}>
-            Enroll
+      <CardFooter className="flex flex-col gap-3 border-t p-4">
+        {course.teamsMeetingLink && (
+          <Button
+            asChild
+            variant="secondary"
+            className="w-full"
+            data-testid={`${testId}-teams-link`}
+          >
+            <a
+              href={course.teamsMeetingLink}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              <Video className="mr-2 h-4 w-4" />
+              Join Teams Meeting
+            </a>
           </Button>
         )}
-        {showManageButton && (
-          <Button asChild className="flex-1" data-testid={`${testId}-manage`}>
-            <Link href={`/tutor/courses/${course.id}`}>Manage</Link>
-          </Button>
-        )}
+        <div className="flex w-full gap-2">
+          {showEnrollButton && (
+            <Button onClick={onEnroll} className="flex-1" data-testid={`${testId}-enroll`}>
+              Enroll
+            </Button>
+          )}
+          {showManageButton && (
+            <Button asChild className="flex-1" data-testid={`${testId}-manage`}>
+              <Link href={`/tutor/courses/${course.id}`}>Manage</Link>
+            </Button>
+          )}
+        </div>
       </CardFooter>
     </Card>
   );

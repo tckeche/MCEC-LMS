@@ -186,6 +186,7 @@ export const courses = pgTable("courses", {
   isActive: boolean("is_active").default(true).notNull(),
   maxEnrollment: integer("max_enrollment").default(30),
   imageUrl: varchar("image_url"),
+  teamsMeetingLink: text("teams_meeting_link"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });

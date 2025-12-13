@@ -1,10 +1,11 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useParams, Link } from "wouter";
-import { useState } from "react";
-import { BookOpen, Users, UserPlus, ArrowLeft, Check, Search } from "lucide-react";
+import { useState, useEffect } from "react";
+import { BookOpen, Users, UserPlus, ArrowLeft, Check, Search, Video, Pencil, ExternalLink, X, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
 import {
   Dialog,
   DialogContent,
@@ -35,6 +36,8 @@ export default function TutorCourseDetail() {
   const { id } = useParams<{ id: string }>();
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [isEditingTeamsLink, setIsEditingTeamsLink] = useState(false);
+  const [teamsLinkInput, setTeamsLinkInput] = useState("");
   const { toast } = useToast();
 
   const { data: course, isLoading: courseLoading } = useQuery<CourseWithTutor>({
@@ -73,6 +76,43 @@ export default function TutorCourseDetail() {
       });
     },
   });
+
+  const teamsLinkMutation = useMutation({
+    mutationFn: async (teamsMeetingLink: string | null) => {
+      return apiRequest("PATCH", `/api/courses/${id}`, { teamsMeetingLink });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/courses", id] });
+      setIsEditingTeamsLink(false);
+      toast({
+        title: "Teams link updated",
+        description: "The Microsoft Teams meeting link has been saved.",
+      });
+    },
+    onError: () => {
+      toast({
+        title: "Error",
+        description: "Failed to update Teams link. Please try again.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  useEffect(() => {
+    if (course?.teamsMeetingLink) {
+      setTeamsLinkInput(course.teamsMeetingLink);
+    }
+  }, [course?.teamsMeetingLink]);
+
+  const handleSaveTeamsLink = () => {
+    const link = teamsLinkInput.trim();
+    teamsLinkMutation.mutate(link || null);
+  };
+
+  const handleCancelEditTeamsLink = () => {
+    setTeamsLinkInput(course?.teamsMeetingLink || "");
+    setIsEditingTeamsLink(false);
+  };
 
   const enrolledStudentIds = enrollments?.map(e => e.studentId) || [];
   const availableStudents = allStudents?.filter(s => !enrolledStudentIds.includes(s.id)) || [];
@@ -125,6 +165,85 @@ export default function TutorCourseDetail() {
           </div>
         </div>
       </div>
+
+      <Card className="mb-6">
+        <CardHeader className="flex flex-row items-center justify-between gap-4">
+          <div>
+            <CardTitle className="font-heading text-xl flex items-center gap-2">
+              <Video className="h-5 w-5" />
+              Microsoft Teams Meeting Link
+            </CardTitle>
+            <CardDescription>
+              Set the Teams link for online sessions. Students will see this link.
+            </CardDescription>
+          </div>
+          {!isEditingTeamsLink && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setIsEditingTeamsLink(true)}
+              data-testid="button-edit-teams-link"
+            >
+              <Pencil className="mr-2 h-4 w-4" />
+              Edit
+            </Button>
+          )}
+        </CardHeader>
+        <CardContent>
+          {isEditingTeamsLink ? (
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+              <Input
+                type="url"
+                placeholder="https://teams.microsoft.com/l/meetup-join/..."
+                value={teamsLinkInput}
+                onChange={(e) => setTeamsLinkInput(e.target.value)}
+                className="flex-1"
+                data-testid="input-teams-link"
+              />
+              <div className="flex gap-2">
+                <Button
+                  onClick={handleSaveTeamsLink}
+                  disabled={teamsLinkMutation.isPending}
+                  data-testid="button-save-teams-link"
+                >
+                  {teamsLinkMutation.isPending ? (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  ) : (
+                    <Check className="mr-2 h-4 w-4" />
+                  )}
+                  Save
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={handleCancelEditTeamsLink}
+                  disabled={teamsLinkMutation.isPending}
+                  data-testid="button-cancel-teams-link"
+                >
+                  <X className="mr-2 h-4 w-4" />
+                  Cancel
+                </Button>
+              </div>
+            </div>
+          ) : course.teamsMeetingLink ? (
+            <div className="flex items-center gap-2 flex-wrap">
+              <a
+                href={course.teamsMeetingLink}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-sm text-primary hover:underline flex items-center gap-1 break-all"
+                data-testid="link-teams-meeting"
+              >
+                {course.teamsMeetingLink}
+                <ExternalLink className="h-3 w-3 flex-shrink-0" />
+              </a>
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground" data-testid="text-no-teams-link">
+              No Teams link set. Click Edit to add one.
+            </p>
+          )}
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader className="flex flex-row items-center justify-between gap-4">
