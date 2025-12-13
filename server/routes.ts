@@ -136,6 +136,128 @@ export async function registerRoutes(
   });
 
   // ==========================================
+  // STAFF ROLE REQUEST ROUTES
+  // ==========================================
+  
+  // Submit staff role proposal (authenticated users only)
+  app.post('/api/staff/proposals', isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const userId = req.user?.claims?.sub;
+      if (!userId) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+      
+      const { proposedRole, notes } = req.body;
+      
+      // Validate proposed role
+      if (!['tutor', 'manager', 'admin'].includes(proposedRole)) {
+        return res.status(400).json({ message: "Invalid role. Must be tutor, manager, or admin" });
+      }
+      
+      // Check if user already has a pending request
+      const existingRequest = await storage.getUserStaffRoleRequest(userId);
+      if (existingRequest && existingRequest.status === 'pending') {
+        return res.status(400).json({ message: "You already have a pending role request" });
+      }
+      
+      // Create the staff role request
+      const request = await storage.createStaffRoleRequest({
+        userId,
+        proposedRole,
+        notes: notes || null,
+        status: 'pending',
+      });
+      
+      // Update user status to pending
+      await storage.updateUserAccountStatus(userId, 'pending');
+      
+      res.status(201).json(request);
+    } catch (error) {
+      console.error("Error creating staff role request:", error);
+      res.status(500).json({ message: "Failed to submit staff role request" });
+    }
+  });
+  
+  // Get current user's staff role request
+  app.get('/api/staff/proposals/me', isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const userId = req.user?.claims?.sub;
+      if (!userId) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+      
+      const request = await storage.getUserStaffRoleRequest(userId);
+      res.json(request || null);
+    } catch (error) {
+      console.error("Error fetching user's staff role request:", error);
+      res.status(500).json({ message: "Failed to fetch staff role request" });
+    }
+  });
+  
+  // Get all pending staff role requests (admin level 3+ only)
+  app.get('/api/staff/proposals', isAuthenticated, requireRole("admin"), async (req: Request, res: Response) => {
+    try {
+      const dbUser = (req as any).dbUser;
+      if (dbUser.adminLevel < 3) {
+        return res.status(403).json({ message: "Insufficient admin level. Level 3 required." });
+      }
+      
+      const requests = await storage.getPendingStaffRequests();
+      res.json(requests);
+    } catch (error) {
+      console.error("Error fetching pending staff requests:", error);
+      res.status(500).json({ message: "Failed to fetch pending requests" });
+    }
+  });
+  
+  // Approve staff role request (admin level 3+ only)
+  app.post('/api/staff/proposals/:id/approve', isAuthenticated, requireRole("admin"), async (req: Request, res: Response) => {
+    try {
+      const dbUser = (req as any).dbUser;
+      if (dbUser.adminLevel < 3) {
+        return res.status(403).json({ message: "Insufficient admin level. Level 3 required." });
+      }
+      
+      const reviewerId = req.user?.claims?.sub;
+      if (!reviewerId) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+      
+      await storage.approveStaffRequest(req.params.id, reviewerId);
+      res.json({ message: "Staff request approved" });
+    } catch (error) {
+      console.error("Error approving staff request:", error);
+      res.status(500).json({ message: "Failed to approve staff request" });
+    }
+  });
+  
+  // Reject staff role request (admin level 3+ only)
+  app.post('/api/staff/proposals/:id/reject', isAuthenticated, requireRole("admin"), async (req: Request, res: Response) => {
+    try {
+      const dbUser = (req as any).dbUser;
+      if (dbUser.adminLevel < 3) {
+        return res.status(403).json({ message: "Insufficient admin level. Level 3 required." });
+      }
+      
+      const reviewerId = req.user?.claims?.sub;
+      if (!reviewerId) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+      
+      const { reason } = req.body;
+      if (!reason) {
+        return res.status(400).json({ message: "Rejection reason is required" });
+      }
+      
+      await storage.rejectStaffRequest(req.params.id, reviewerId, reason);
+      res.json({ message: "Staff request rejected" });
+    } catch (error) {
+      console.error("Error rejecting staff request:", error);
+      res.status(500).json({ message: "Failed to reject staff request" });
+    }
+  });
+
+  // ==========================================
   // USER ROUTES
   // ==========================================
   

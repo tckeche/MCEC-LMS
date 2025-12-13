@@ -84,6 +84,11 @@ import {
   type PayoutFlag,
   type InsertPayoutFlag,
   type PayoutStatus,
+  staffRoleRequests,
+  type StaffRoleRequest,
+  type InsertStaffRoleRequest,
+  type StaffRoleRequestWithDetails,
+  type UserStatus,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, and, desc, count, sql, inArray, or, gte, lte, ne } from "drizzle-orm";
@@ -289,6 +294,20 @@ export interface IStorage {
   getPayoutFlags(payoutId: string): Promise<PayoutFlag[]>;
   createPayoutFlag(flag: InsertPayoutFlag): Promise<PayoutFlag>;
   updatePayoutFlag(id: string, updates: Partial<InsertPayoutFlag>): Promise<PayoutFlag | undefined>;
+  
+  // ==========================================
+  // STAFF ROLE REQUEST OPERATIONS
+  // ==========================================
+  
+  createStaffRoleRequest(request: InsertStaffRoleRequest): Promise<StaffRoleRequest>;
+  getStaffRoleRequest(id: string): Promise<StaffRoleRequestWithDetails | undefined>;
+  getPendingStaffRequests(): Promise<StaffRoleRequestWithDetails[]>;
+  getUserStaffRoleRequest(userId: string): Promise<StaffRoleRequest | undefined>;
+  approveStaffRequest(id: string, reviewedById: string): Promise<void>;
+  rejectStaffRequest(id: string, reviewedById: string, reason: string): Promise<void>;
+  
+  // User account status operations
+  updateUserAccountStatus(id: string, status: UserStatus): Promise<User | undefined>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -1790,6 +1809,126 @@ export class DatabaseStorage implements IStorage {
       .where(eq(payoutFlags.id, id))
       .returning();
     return updated;
+  }
+
+  // ==========================================
+  // STAFF ROLE REQUEST OPERATIONS
+  // ==========================================
+
+  async createStaffRoleRequest(request: InsertStaffRoleRequest): Promise<StaffRoleRequest> {
+    const [newRequest] = await db.insert(staffRoleRequests).values(request).returning();
+    return newRequest;
+  }
+
+  async getStaffRoleRequest(id: string): Promise<StaffRoleRequestWithDetails | undefined> {
+    const result = await db
+      .select()
+      .from(staffRoleRequests)
+      .innerJoin(users, eq(staffRoleRequests.userId, users.id))
+      .where(eq(staffRoleRequests.id, id));
+    
+    if (result.length === 0) return undefined;
+    
+    const row = result[0];
+    let reviewedBy: User | undefined;
+    
+    if (row.staff_role_requests.reviewedById) {
+      const [reviewer] = await db.select().from(users).where(eq(users.id, row.staff_role_requests.reviewedById));
+      reviewedBy = reviewer;
+    }
+    
+    return {
+      ...row.staff_role_requests,
+      user: row.users,
+      reviewedBy,
+    };
+  }
+
+  async getPendingStaffRequests(): Promise<StaffRoleRequestWithDetails[]> {
+    const results = await db
+      .select()
+      .from(staffRoleRequests)
+      .innerJoin(users, eq(staffRoleRequests.userId, users.id))
+      .where(eq(staffRoleRequests.status, "pending"))
+      .orderBy(desc(staffRoleRequests.createdAt));
+    
+    return results.map(r => ({
+      ...r.staff_role_requests,
+      user: r.users,
+    }));
+  }
+
+  async getUserStaffRoleRequest(userId: string): Promise<StaffRoleRequest | undefined> {
+    const [request] = await db
+      .select()
+      .from(staffRoleRequests)
+      .where(eq(staffRoleRequests.userId, userId))
+      .orderBy(desc(staffRoleRequests.createdAt));
+    return request;
+  }
+
+  async approveStaffRequest(id: string, reviewedById: string): Promise<void> {
+    const [request] = await db
+      .select()
+      .from(staffRoleRequests)
+      .where(eq(staffRoleRequests.id, id));
+    
+    if (!request) return;
+    
+    await db
+      .update(staffRoleRequests)
+      .set({
+        status: "approved",
+        reviewedById,
+        reviewedAt: new Date(),
+      })
+      .where(eq(staffRoleRequests.id, id));
+    
+    await db
+      .update(users)
+      .set({
+        role: request.proposedRole,
+        status: "active",
+        updatedAt: new Date(),
+      })
+      .where(eq(users.id, request.userId));
+  }
+
+  async rejectStaffRequest(id: string, reviewedById: string, reason: string): Promise<void> {
+    const [request] = await db
+      .select()
+      .from(staffRoleRequests)
+      .where(eq(staffRoleRequests.id, id));
+    
+    if (!request) return;
+    
+    await db
+      .update(staffRoleRequests)
+      .set({
+        status: "rejected",
+        reviewedById,
+        reviewedAt: new Date(),
+        rejectionReason: reason,
+      })
+      .where(eq(staffRoleRequests.id, id));
+    
+    await db
+      .update(users)
+      .set({
+        status: "rejected",
+        updatedAt: new Date(),
+      })
+      .where(eq(users.id, request.userId));
+  }
+
+  // User account status operations
+  async updateUserAccountStatus(id: string, status: UserStatus): Promise<User | undefined> {
+    const [user] = await db
+      .update(users)
+      .set({ status, updatedAt: new Date() })
+      .where(eq(users.id, id))
+      .returning();
+    return user;
   }
 }
 

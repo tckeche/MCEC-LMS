@@ -1,5 +1,5 @@
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import {
   BookOpen,
   Users,
@@ -7,8 +7,12 @@ import {
   Shield,
   Award,
   GraduationCap,
+  LogIn,
+  UserPlus,
+  Briefcase,
 } from "lucide-react";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { Link } from "wouter";
 import mcecLogo from "@assets/MCEC_Transparent_Logo_1765615854771.jpg";
 import teamImage from "@assets/IMG_8885_1765615332523.jpg";
 import studentLaptopImage from "@assets/IMG_9484_1765615416395.jpg";
@@ -87,11 +91,68 @@ export default function Landing() {
             <p className="mx-auto mt-6 max-w-2xl text-lg text-foreground md:text-xl" data-testid="text-hero-description">
               A comprehensive learning management platform designed by MELANIA CALVIN to help students succeed, support parents in their children's education, and empower tutors to deliver exceptional results.
             </p>
-            <div className="mt-10 flex flex-col items-center justify-center gap-4 sm:flex-row">
-              <Button size="lg" asChild data-testid="button-get-started">
-                <a href="/api/login">Get Started</a>
-              </Button>
-              <Button size="lg" variant="outline" asChild data-testid="button-learn-more">
+            
+            <div className="mt-12 grid gap-4 md:grid-cols-3 max-w-3xl mx-auto">
+              <Card className="hover-elevate text-left">
+                <CardHeader className="pb-3">
+                  <div className="flex items-center gap-3">
+                    <div className="flex h-10 w-10 items-center justify-center rounded-md bg-primary/10 text-primary">
+                      <LogIn className="h-5 w-5" />
+                    </div>
+                    <CardTitle className="text-lg">Login</CardTitle>
+                  </div>
+                </CardHeader>
+                <CardContent className="pt-0">
+                  <CardDescription className="mb-4">
+                    Already have an account? Sign in to access your dashboard.
+                  </CardDescription>
+                  <Button className="w-full" asChild data-testid="button-auth-login">
+                    <a href="/api/login">Sign In</a>
+                  </Button>
+                </CardContent>
+              </Card>
+
+              <Card className="hover-elevate text-left">
+                <CardHeader className="pb-3">
+                  <div className="flex items-center gap-3">
+                    <div className="flex h-10 w-10 items-center justify-center rounded-md bg-primary/10 text-primary">
+                      <UserPlus className="h-5 w-5" />
+                    </div>
+                    <CardTitle className="text-lg">Student / Parent</CardTitle>
+                  </div>
+                </CardHeader>
+                <CardContent className="pt-0">
+                  <CardDescription className="mb-4">
+                    New student or parent? Create your account to get started.
+                  </CardDescription>
+                  <Button className="w-full" variant="outline" asChild data-testid="button-auth-parent-signup">
+                    <Link href="/auth/parent-signup">Sign Up</Link>
+                  </Button>
+                </CardContent>
+              </Card>
+
+              <Card className="hover-elevate text-left">
+                <CardHeader className="pb-3">
+                  <div className="flex items-center gap-3">
+                    <div className="flex h-10 w-10 items-center justify-center rounded-md bg-primary/10 text-primary">
+                      <Briefcase className="h-5 w-5" />
+                    </div>
+                    <CardTitle className="text-lg">Staff</CardTitle>
+                  </div>
+                </CardHeader>
+                <CardContent className="pt-0">
+                  <CardDescription className="mb-4">
+                    Staff member? Sign up with your @melaniacalvin.com email.
+                  </CardDescription>
+                  <Button className="w-full" variant="outline" asChild data-testid="button-auth-staff-signup">
+                    <a href="/api/login/microsoft">Staff Sign Up</a>
+                  </Button>
+                </CardContent>
+              </Card>
+            </div>
+
+            <div className="mt-8">
+              <Button size="lg" variant="ghost" asChild data-testid="button-learn-more">
                 <a href="#features">Learn More</a>
               </Button>
             </div>
@@ -161,9 +222,14 @@ export default function Landing() {
             <p className="mt-4 text-lg text-muted-foreground">
               Join MELANIA CALVIN Educational Consultants today and transform your educational experience.
             </p>
-            <Button size="lg" className="mt-8" asChild data-testid="button-cta-signin">
-              <a href="/api/login">Sign In Now</a>
-            </Button>
+            <div className="mt-8 flex flex-col items-center justify-center gap-4 sm:flex-row">
+              <Button size="lg" asChild data-testid="button-cta-signin">
+                <a href="/api/login">Sign In</a>
+              </Button>
+              <Button size="lg" variant="outline" asChild data-testid="button-cta-signup">
+                <Link href="/auth/parent-signup">Create Account</Link>
+              </Button>
+            </div>
           </div>
         </section>
       </main>
