@@ -9,6 +9,8 @@ import { AppSidebar } from "@/components/layout/app-sidebar";
 import { Header } from "@/components/layout/header";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { NotificationBell } from "@/components/notification-bell";
+import { ViewAsDropdown } from "@/components/view-as-dropdown";
+import { ViewAsProvider, useViewAs } from "@/contexts/view-as-context";
 import { useAuth } from "@/hooks/useAuth";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
@@ -127,6 +129,7 @@ function AuthenticatedLayout({ children }: { children: React.ReactNode }) {
           <header className="sticky top-0 z-50 flex h-14 items-center justify-between gap-4 border-b bg-background px-4">
             <SidebarTrigger data-testid="button-sidebar-toggle" />
             <div className="flex items-center gap-2">
+              <ViewAsDropdown />
               <NotificationBell />
               <ThemeToggle />
             </div>
@@ -214,6 +217,7 @@ function AdminRoutes() {
 
 function AppRouter() {
   const { user, isLoading } = useAuth();
+  const { viewAsRole } = useViewAs();
   const [location] = useLocation();
 
   if (isLoading) {
@@ -285,9 +289,16 @@ function AppRouter() {
     admin: <AdminRoutes />,
   };
 
+  const effectiveRole = user.isSuperAdmin && viewAsRole ? viewAsRole : user.role;
+
   return (
     <AuthenticatedLayout>
-      {roleRoutes[user.role] || <NotFound />}
+      <Switch>
+        {user.isSuperAdmin && (
+          <Route path="/admin/super-admin" component={SuperAdminUsers} />
+        )}
+        {roleRoutes[effectiveRole] || <NotFound />}
+      </Switch>
     </AuthenticatedLayout>
   );
 }
@@ -297,7 +308,9 @@ function App() {
     <QueryClientProvider client={queryClient}>
       <ThemeProvider defaultTheme="system" storageKey="mcec-lms-theme">
         <TooltipProvider>
-          <AppRouter />
+          <ViewAsProvider>
+            <AppRouter />
+          </ViewAsProvider>
           <Toaster />
         </TooltipProvider>
       </ThemeProvider>

@@ -29,6 +29,7 @@ import {
   SidebarFooter,
 } from "@/components/ui/sidebar";
 import { useAuth } from "@/hooks/useAuth";
+import { useViewAs } from "@/contexts/view-as-context";
 import type { UserRole } from "@shared/schema";
 
 interface NavItem {
@@ -189,13 +190,18 @@ const navItems: NavItem[] = [
 
 export function AppSidebar() {
   const { user } = useAuth();
+  const { viewAsRole } = useViewAs();
   const [location] = useLocation();
 
   if (!user) return null;
 
+  const effectiveRole = user.isSuperAdmin && viewAsRole ? viewAsRole : user.role;
+
   const filteredItems = navItems.filter((item) => {
-    if (item.superAdminOnly && !user.isSuperAdmin) return false;
-    return item.roles.includes(user.role as UserRole);
+    if (item.superAdminOnly) {
+      return user.isSuperAdmin;
+    }
+    return item.roles.includes(effectiveRole as UserRole);
   });
 
   const mainItems = filteredItems.filter(
