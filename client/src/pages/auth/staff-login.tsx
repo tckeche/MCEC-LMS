@@ -13,7 +13,7 @@ export default function StaffLogin() {
   const { toast } = useToast();
   const [, setLocation] = useLocation();
   
-  const [isMicrosoftDevMode, setIsMicrosoftDevMode] = useState(false);
+  const [isMicrosoftDevMode, setIsMicrosoftDevMode] = useState<boolean | null>(null);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -25,7 +25,9 @@ export default function StaffLogin() {
       .then(data => {
         setIsMicrosoftDevMode(data.microsoftDevMode);
       })
-      .catch(() => {});
+      .catch(() => {
+        setIsMicrosoftDevMode(false);
+      });
   }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -77,6 +79,14 @@ export default function StaffLogin() {
       setIsSubmitting(false);
     }
   };
+
+  if (isMicrosoftDevMode === null) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="animate-pulse text-muted-foreground">Loading...</div>
+      </div>
+    );
+  }
 
   if (!isMicrosoftDevMode) {
     return (

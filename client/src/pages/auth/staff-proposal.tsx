@@ -21,7 +21,7 @@ export default function StaffProposal() {
   const [notes, setNotes] = useState("");
   const [submitted, setSubmitted] = useState(false);
   
-  const [isMicrosoftDevMode, setIsMicrosoftDevMode] = useState(false);
+  const [isMicrosoftDevMode, setIsMicrosoftDevMode] = useState<boolean | null>(null);
   const [devEmail, setDevEmail] = useState("");
   const [devFirstName, setDevFirstName] = useState("");
   const [devLastName, setDevLastName] = useState("");
@@ -39,7 +39,9 @@ export default function StaffProposal() {
       .then(data => {
         setIsMicrosoftDevMode(data.microsoftDevMode);
       })
-      .catch(() => {});
+      .catch(() => {
+        setIsMicrosoftDevMode(false);
+      });
   }, []);
 
   const submitProposalMutation = useMutation({
@@ -141,7 +143,7 @@ export default function StaffProposal() {
     }
   };
 
-  if (isLoading) {
+  if (isLoading || isMicrosoftDevMode === null) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
         <div className="animate-pulse text-muted-foreground">Loading...</div>
