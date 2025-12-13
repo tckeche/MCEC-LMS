@@ -21,7 +21,7 @@ export default function StaffProposal() {
   const [notes, setNotes] = useState("");
   const [submitted, setSubmitted] = useState(false);
   
-  const [isMicrosoftDevMode, setIsMicrosoftDevMode] = useState<boolean | null>(null);
+  const [staffFallbackEnabled, setStaffFallbackEnabled] = useState<boolean | null>(null);
   const [devEmail, setDevEmail] = useState("");
   const [devFirstName, setDevFirstName] = useState("");
   const [devLastName, setDevLastName] = useState("");
@@ -37,10 +37,10 @@ export default function StaffProposal() {
     fetch("/api/auth/dev-status")
       .then(res => res.json())
       .then(data => {
-        setIsMicrosoftDevMode(data.microsoftDevMode);
+        setStaffFallbackEnabled(data.staffFallbackEnabled);
       })
       .catch(() => {
-        setIsMicrosoftDevMode(false);
+        setStaffFallbackEnabled(false);
       });
   }, []);
 
@@ -143,7 +143,7 @@ export default function StaffProposal() {
     }
   };
 
-  if (isLoading || isMicrosoftDevMode === null) {
+  if (isLoading || staffFallbackEnabled === null) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
         <div className="animate-pulse text-muted-foreground">Loading...</div>
@@ -194,7 +194,7 @@ export default function StaffProposal() {
   }
 
   if (!user) {
-    if (isMicrosoftDevMode) {
+    if (staffFallbackEnabled) {
       return (
         <div className="min-h-screen bg-background flex flex-col">
           <header className="sticky top-0 z-50 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">

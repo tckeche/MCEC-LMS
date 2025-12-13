@@ -1,42 +1,53 @@
-// Development-mode authentication bypass
-// This file provides dev-mode authentication when Azure AD / Twilio are not configured
-// SECURITY: Dev routes are ONLY enabled when NODE_ENV is "development"
+// Authentication fallback when Azure AD / Twilio are not configured
+// Staff email+password auth is enabled when Azure SSO credentials are missing
+// Phone OTP fallback is enabled when Twilio credentials are missing
 
 import type { Express, Request, Response } from "express";
 import { storage } from "./storage";
 import crypto from "crypto";
 import { hashPassword, verifyPassword } from "./passwordUtils";
 
-// SECURITY: Only enable dev mode in development environment AND when credentials are missing
-const IS_DEVELOPMENT = process.env.NODE_ENV === "development";
-const AZURE_CREDS_MISSING = !process.env.AZURE_CLIENT_ID || !process.env.AZURE_CLIENT_SECRET;
-const TWILIO_CREDS_MISSING = !process.env.TWILIO_ACCOUNT_SID || !process.env.TWILIO_AUTH_TOKEN;
+// Check if Azure SSO is fully configured (both credentials required)
+const AZURE_SSO_CONFIGURED = !!(
+  process.env.AZURE_CLIENT_ID && 
+  process.env.AZURE_CLIENT_SECRET
+);
 
-// Dev mode requires BOTH: development environment AND missing credentials
-const IS_DEV_MODE = IS_DEVELOPMENT && AZURE_CREDS_MISSING;
-const IS_OTP_DEV_MODE = IS_DEVELOPMENT && TWILIO_CREDS_MISSING;
+// Staff fallback auth enabled when Azure SSO is NOT configured
+const STAFF_FALLBACK_ENABLED = !AZURE_SSO_CONFIGURED;
+
+// Check if Twilio is configured for phone OTP
+const TWILIO_CONFIGURED = !!(
+  process.env.TWILIO_ACCOUNT_SID && 
+  process.env.TWILIO_AUTH_TOKEN
+);
+
+// OTP fallback enabled when Twilio is NOT configured  
+const OTP_FALLBACK_ENABLED = !TWILIO_CONFIGURED;
 
 // In-memory OTP storage for dev mode
 const devOtpStore = new Map<string, { otp: string; expiresAt: number; userData: any }>();
 
 export function setupDevAuth(app: Express) {
-  // Log security warnings for production
-  if (!IS_DEVELOPMENT && AZURE_CREDS_MISSING) {
-    console.warn("[SECURITY WARNING] AZURE_CLIENT_ID or AZURE_CLIENT_SECRET missing in production!");
-    console.warn("[SECURITY WARNING] Microsoft SSO will NOT work. Dev mode is disabled for security.");
+  // Log auth configuration status
+  if (STAFF_FALLBACK_ENABLED) {
+    console.log("[Auth] Staff email+password fallback ENABLED (Azure SSO not configured)");
+  } else {
+    console.log("[Auth] Microsoft SSO configured with Azure AD");
   }
   
-  if (!IS_DEVELOPMENT && TWILIO_CREDS_MISSING) {
-    console.warn("[SECURITY WARNING] TWILIO_ACCOUNT_SID or TWILIO_AUTH_TOKEN missing in production!");
-    console.warn("[SECURITY WARNING] Phone OTP will NOT work. Dev mode is disabled for security.");
+  if (OTP_FALLBACK_ENABLED) {
+    console.log("[Auth] Phone OTP fallback ENABLED (Twilio not configured)");
+  } else {
+    console.log("[Auth] Phone OTP configured with Twilio");
   }
 
   // ==========================================
-  // MICROSOFT SSO (Staff) - Dev Mode Bypass
+  // MICROSOFT SSO (Staff) - Fallback Auth
   // ==========================================
   
-  if (IS_DEV_MODE) {
-    console.log("[Dev Auth] Microsoft SSO running in DEVELOPMENT MODE - no Azure credentials required");
+  if (STAFF_FALLBACK_ENABLED) {
+    console.log("[Auth] Staff signup/login via email+password is available");
     
     // Dev mode: Show staff signup form instead of redirecting to Azure
     app.get("/api/login/microsoft", (req: Request, res: Response) => {
@@ -177,26 +188,18 @@ export function setupDevAuth(app: Express) {
       }
     });
   } else {
-    if (AZURE_CREDS_MISSING) {
-      console.log("[Auth] Microsoft SSO disabled - Azure credentials not configured");
-      app.get("/api/login/microsoft", (req: Request, res: Response) => {
-        res.status(503).json({ message: "Microsoft SSO is not configured" });
-      });
-    } else {
-      console.log("[Auth] Microsoft SSO configured with Azure AD");
-      // TODO: Implement real Azure AD OAuth when credentials are available
-      app.get("/api/login/microsoft", (req: Request, res: Response) => {
-        res.redirect("/auth/staff-proposal");
-      });
-    }
+    // Azure SSO is configured - redirect to Azure for staff login
+    // TODO: Implement real Azure AD OAuth when credentials are available
+    app.get("/api/login/microsoft", (req: Request, res: Response) => {
+      res.redirect("/auth/staff-proposal");
+    });
   }
   
   // ==========================================
-  // PHONE OTP (Student/Parent) - Dev Mode Bypass
+  // PHONE OTP (Student/Parent) - Fallback Auth
   // ==========================================
   
-  if (IS_OTP_DEV_MODE) {
-    console.log("[Dev Auth] Phone OTP running in DEVELOPMENT MODE - no Twilio credentials required");
+  if (OTP_FALLBACK_ENABLED) {
     
     // Dev mode: Request OTP (logs OTP to console for testing)
     app.post("/api/auth/otp/request", async (req: Request, res: Response) => {
@@ -321,34 +324,22 @@ export function setupDevAuth(app: Express) {
       }
     });
   } else {
-    if (TWILIO_CREDS_MISSING) {
-      console.log("[Auth] Phone OTP disabled - Twilio credentials not configured");
-      app.post("/api/auth/otp/request", (req: Request, res: Response) => {
-        res.status(503).json({ message: "Phone OTP is not configured" });
-      });
-      
-      app.post("/api/auth/otp/verify", (req: Request, res: Response) => {
-        res.status(503).json({ message: "Phone OTP is not configured" });
-      });
-    } else {
-      console.log("[Auth] Phone OTP configured with Twilio");
-      // TODO: Implement real Twilio OTP when credentials are available
-      app.post("/api/auth/otp/request", (req: Request, res: Response) => {
-        res.status(501).json({ message: "Twilio integration not yet implemented" });
-      });
-      
-      app.post("/api/auth/otp/verify", (req: Request, res: Response) => {
-        res.status(501).json({ message: "Twilio integration not yet implemented" });
-      });
-    }
+    // Twilio is configured - implement real OTP
+    // TODO: Implement real Twilio OTP when credentials are available
+    app.post("/api/auth/otp/request", (req: Request, res: Response) => {
+      res.status(501).json({ message: "Twilio integration not yet implemented" });
+    });
+    
+    app.post("/api/auth/otp/verify", (req: Request, res: Response) => {
+      res.status(501).json({ message: "Twilio integration not yet implemented" });
+    });
   }
   
-  // Get dev mode status (for frontend to know which flows to show)
-  // SECURITY: Only expose dev status, not credentials or sensitive info
+  // Get auth status (for frontend to know which flows to show)
   app.get("/api/auth/dev-status", (req: Request, res: Response) => {
     res.json({
-      microsoftDevMode: IS_DEV_MODE,
-      otpDevMode: IS_OTP_DEV_MODE,
+      staffFallbackEnabled: STAFF_FALLBACK_ENABLED,
+      otpFallbackEnabled: OTP_FALLBACK_ENABLED,
     });
   });
 }

@@ -13,7 +13,7 @@ export default function StaffLogin() {
   const { toast } = useToast();
   const [, setLocation] = useLocation();
   
-  const [isMicrosoftDevMode, setIsMicrosoftDevMode] = useState<boolean | null>(null);
+  const [staffFallbackEnabled, setStaffFallbackEnabled] = useState<boolean | null>(null);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -23,10 +23,10 @@ export default function StaffLogin() {
     fetch("/api/auth/dev-status")
       .then(res => res.json())
       .then(data => {
-        setIsMicrosoftDevMode(data.microsoftDevMode);
+        setStaffFallbackEnabled(data.staffFallbackEnabled);
       })
       .catch(() => {
-        setIsMicrosoftDevMode(false);
+        setStaffFallbackEnabled(false);
       });
   }, []);
 
@@ -80,7 +80,7 @@ export default function StaffLogin() {
     }
   };
 
-  if (isMicrosoftDevMode === null) {
+  if (staffFallbackEnabled === null) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
         <div className="animate-pulse text-muted-foreground">Loading...</div>
@@ -88,7 +88,7 @@ export default function StaffLogin() {
     );
   }
 
-  if (!isMicrosoftDevMode) {
+  if (!staffFallbackEnabled) {
     return (
       <div className="min-h-screen bg-background flex flex-col">
         <header className="sticky top-0 z-50 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
