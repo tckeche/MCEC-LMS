@@ -13,6 +13,7 @@ import {
   sessionProposals,
   tutoringSessions,
   hourWallets,
+  sessionAttendance,
   type User,
   type UpsertUser,
   type Course,
@@ -51,6 +52,8 @@ import {
   type HourWallet,
   type InsertHourWallet,
   type HourWalletWithDetails,
+  type SessionAttendance,
+  type InsertSessionAttendance,
   type ProposalStatus,
   type TutoringSessionStatus,
 } from "@shared/schema";
@@ -185,6 +188,12 @@ export interface IStorage {
   createHourWallet(wallet: InsertHourWallet): Promise<HourWallet>;
   addMinutesToWallet(studentId: string, courseId: string, minutes: number): Promise<HourWallet | undefined>;
   deductMinutesFromWallet(studentId: string, courseId: string, minutes: number): Promise<HourWallet | undefined>;
+  
+  // Session Attendance operations (for group sessions)
+  getSessionAttendance(sessionId: string): Promise<SessionAttendance[]>;
+  getStudentSessionAttendance(sessionId: string, studentId: string): Promise<SessionAttendance | undefined>;
+  createSessionAttendance(attendance: InsertSessionAttendance): Promise<SessionAttendance>;
+  updateSessionAttendance(id: string, updates: Partial<InsertSessionAttendance>): Promise<SessionAttendance | undefined>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -1226,6 +1235,33 @@ export class DatabaseStorage implements IStorage {
         updatedAt: new Date()
       })
       .where(eq(hourWallets.id, existing.id))
+      .returning();
+    return updated;
+  }
+
+  // Session Attendance operations (for group sessions)
+  async getSessionAttendance(sessionId: string): Promise<SessionAttendance[]> {
+    return db.select().from(sessionAttendance).where(eq(sessionAttendance.sessionId, sessionId));
+  }
+
+  async getStudentSessionAttendance(sessionId: string, studentId: string): Promise<SessionAttendance | undefined> {
+    const [attendance] = await db
+      .select()
+      .from(sessionAttendance)
+      .where(and(eq(sessionAttendance.sessionId, sessionId), eq(sessionAttendance.studentId, studentId)));
+    return attendance;
+  }
+
+  async createSessionAttendance(attendance: InsertSessionAttendance): Promise<SessionAttendance> {
+    const [newAttendance] = await db.insert(sessionAttendance).values(attendance).returning();
+    return newAttendance;
+  }
+
+  async updateSessionAttendance(id: string, updates: Partial<InsertSessionAttendance>): Promise<SessionAttendance | undefined> {
+    const [updated] = await db
+      .update(sessionAttendance)
+      .set(updates)
+      .where(eq(sessionAttendance.id, id))
       .returning();
     return updated;
   }
