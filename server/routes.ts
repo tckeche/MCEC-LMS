@@ -11,7 +11,12 @@ import {
   insertGradeSchema,
   insertAnnouncementSchema,
   insertParentChildSchema,
+  insertTutorAvailabilitySchema,
+  insertSessionProposalSchema,
+  insertHourWalletSchema,
   type UserRole,
+  type ProposalStatus,
+  type TutoringSessionStatus,
 } from "@shared/schema";
 import { z } from "zod";
 
@@ -1298,6 +1303,636 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Error deleting notification:", error);
       res.status(500).json({ message: "Failed to delete notification" });
+    }
+  });
+
+  // ==========================================
+  // TUTOR AVAILABILITY ROUTES
+  // ==========================================
+
+  // Get tutor's own availability slots
+  app.get('/api/tutor/availability', isAuthenticated, requireRole("tutor"), async (req: Request, res: Response) => {
+    try {
+      const tutorId = req.user?.claims?.sub;
+      if (!tutorId) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+      const availability = await storage.getTutorAvailability(tutorId);
+      res.json(availability);
+    } catch (error) {
+      console.error("Error fetching tutor availability:", error);
+      res.status(500).json({ message: "Failed to fetch availability" });
+    }
+  });
+
+  // Get any tutor's availability (for students viewing)
+  app.get('/api/tutors/:tutorId/availability', isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const availability = await storage.getTutorAvailability(req.params.tutorId);
+      res.json(availability);
+    } catch (error) {
+      console.error("Error fetching tutor availability:", error);
+      res.status(500).json({ message: "Failed to fetch availability" });
+    }
+  });
+
+  // Create availability slot (tutor only)
+  app.post('/api/tutor/availability', isAuthenticated, requireRole("tutor"), async (req: Request, res: Response) => {
+    try {
+      const tutorId = req.user?.claims?.sub;
+      if (!tutorId) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+      const validated = insertTutorAvailabilitySchema.parse({
+        ...req.body,
+        tutorId,
+      });
+      const availability = await storage.createTutorAvailability(validated);
+      res.status(201).json(availability);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Invalid data", errors: error.errors });
+      }
+      console.error("Error creating availability:", error);
+      res.status(500).json({ message: "Failed to create availability" });
+    }
+  });
+
+  // Update availability slot (tutor only, must own)
+  app.patch('/api/tutor/availability/:id', isAuthenticated, requireRole("tutor"), async (req: Request, res: Response) => {
+    try {
+      const tutorId = req.user?.claims?.sub;
+      if (!tutorId) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+      const updateSchema = z.object({
+        dayOfWeek: z.number().min(0).max(6).optional(),
+        startTime: z.string().optional(),
+        endTime: z.string().optional(),
+        isRecurring: z.boolean().optional(),
+      });
+      const validated = updateSchema.parse(req.body);
+      const availability = await storage.updateTutorAvailability(req.params.id, tutorId, validated);
+      if (!availability) {
+        return res.status(404).json({ message: "Availability slot not found or not owned by you" });
+      }
+      res.json(availability);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Invalid data", errors: error.errors });
+      }
+      console.error("Error updating availability:", error);
+      res.status(500).json({ message: "Failed to update availability" });
+    }
+  });
+
+  // Delete availability slot (tutor only, must own)
+  app.delete('/api/tutor/availability/:id', isAuthenticated, requireRole("tutor"), async (req: Request, res: Response) => {
+    try {
+      const tutorId = req.user?.claims?.sub;
+      if (!tutorId) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+      const deleted = await storage.deleteTutorAvailability(req.params.id, tutorId);
+      if (!deleted) {
+        return res.status(404).json({ message: "Availability slot not found or not owned by you" });
+      }
+      res.status(204).send();
+    } catch (error) {
+      console.error("Error deleting availability:", error);
+      res.status(500).json({ message: "Failed to delete availability" });
+    }
+  });
+
+  // ==========================================
+  // SESSION PROPOSAL ROUTES
+  // ==========================================
+
+  // Student proposes a session
+  app.post('/api/session-proposals', isAuthenticated, requireRole("student"), async (req: Request, res: Response) => {
+    try {
+      const studentId = req.user?.claims?.sub;
+      if (!studentId) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+
+      // Validate 15-minute block duration
+      const proposedStart = new Date(req.body.proposedStartTime);
+      const proposedEnd = new Date(req.body.proposedEndTime);
+      const durationMinutes = (proposedEnd.getTime() - proposedStart.getTime()) / (1000 * 60);
+      
+      if (durationMinutes <= 0 || durationMinutes % 15 !== 0) {
+        return res.status(400).json({ message: "Session duration must be in 15-minute blocks" });
+      }
+
+      // Check for double booking on the tutor's side
+      const isDoubleBooked = await storage.checkDoubleBooking(
+        req.body.tutorId,
+        proposedStart,
+        proposedEnd
+      );
+      if (isDoubleBooked) {
+        return res.status(409).json({ message: "The tutor already has a session scheduled at this time" });
+      }
+
+      const validated = insertSessionProposalSchema.parse({
+        ...req.body,
+        studentId,
+        proposedStartTime: proposedStart,
+        proposedEndTime: proposedEnd,
+      });
+      const proposal = await storage.createSessionProposal(validated);
+      res.status(201).json(proposal);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Invalid data", errors: error.errors });
+      }
+      console.error("Error creating session proposal:", error);
+      res.status(500).json({ message: "Failed to create session proposal" });
+    }
+  });
+
+  // Get student's proposals
+  app.get('/api/session-proposals/student', isAuthenticated, requireRole("student"), async (req: Request, res: Response) => {
+    try {
+      const studentId = req.user?.claims?.sub;
+      if (!studentId) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+      const proposals = await storage.getSessionProposalsByStudent(studentId);
+      res.json(proposals);
+    } catch (error) {
+      console.error("Error fetching student proposals:", error);
+      res.status(500).json({ message: "Failed to fetch proposals" });
+    }
+  });
+
+  // Get tutor's pending proposals
+  app.get('/api/session-proposals/tutor', isAuthenticated, requireRole("tutor"), async (req: Request, res: Response) => {
+    try {
+      const tutorId = req.user?.claims?.sub;
+      if (!tutorId) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+      const status = req.query.status as ProposalStatus | undefined;
+      const proposals = await storage.getSessionProposalsByTutor(tutorId, status);
+      res.json(proposals);
+    } catch (error) {
+      console.error("Error fetching tutor proposals:", error);
+      res.status(500).json({ message: "Failed to fetch proposals" });
+    }
+  });
+
+  // Tutor approves a proposal (creates a tutoring session)
+  app.patch('/api/session-proposals/:id/approve', isAuthenticated, requireRole("tutor"), async (req: Request, res: Response) => {
+    try {
+      const tutorId = req.user?.claims?.sub;
+      if (!tutorId) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+
+      const proposal = await storage.getSessionProposal(req.params.id);
+      if (!proposal) {
+        return res.status(404).json({ message: "Proposal not found" });
+      }
+      if (proposal.tutorId !== tutorId) {
+        return res.status(403).json({ message: "You can only approve your own proposals" });
+      }
+      if (proposal.status !== "pending") {
+        return res.status(400).json({ message: "Proposal is no longer pending" });
+      }
+
+      // Check for double booking before approving
+      const isDoubleBooked = await storage.checkDoubleBooking(
+        tutorId,
+        new Date(proposal.proposedStartTime),
+        new Date(proposal.proposedEndTime)
+      );
+      if (isDoubleBooked) {
+        return res.status(409).json({ message: "You already have a session scheduled at this time" });
+      }
+
+      // Update proposal status
+      await storage.updateSessionProposalStatus(req.params.id, "approved", req.body.tutorResponse);
+
+      // Create the tutoring session
+      const session = await storage.createTutoringSession({
+        proposalId: proposal.id,
+        tutorId: proposal.tutorId,
+        studentId: proposal.studentId,
+        courseId: proposal.courseId,
+        scheduledStartTime: new Date(proposal.proposedStartTime),
+        scheduledEndTime: new Date(proposal.proposedEndTime),
+        status: "scheduled",
+      });
+
+      // Notify the student
+      try {
+        await storage.createNotification({
+          userId: proposal.studentId,
+          type: "session_approved",
+          title: "Session Approved",
+          message: `Your tutoring session request has been approved for ${new Date(proposal.proposedStartTime).toLocaleString()}`,
+          link: "/sessions",
+          isRead: false,
+          relatedId: session.id,
+        });
+      } catch (notifError) {
+        console.error("Error creating notification:", notifError);
+      }
+
+      res.json({ proposal: { ...proposal, status: "approved" }, session });
+    } catch (error) {
+      console.error("Error approving proposal:", error);
+      res.status(500).json({ message: "Failed to approve proposal" });
+    }
+  });
+
+  // Tutor rejects a proposal
+  app.patch('/api/session-proposals/:id/reject', isAuthenticated, requireRole("tutor"), async (req: Request, res: Response) => {
+    try {
+      const tutorId = req.user?.claims?.sub;
+      if (!tutorId) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+
+      const proposal = await storage.getSessionProposal(req.params.id);
+      if (!proposal) {
+        return res.status(404).json({ message: "Proposal not found" });
+      }
+      if (proposal.tutorId !== tutorId) {
+        return res.status(403).json({ message: "You can only reject your own proposals" });
+      }
+      if (proposal.status !== "pending") {
+        return res.status(400).json({ message: "Proposal is no longer pending" });
+      }
+
+      const updated = await storage.updateSessionProposalStatus(req.params.id, "rejected", req.body.tutorResponse);
+
+      // Notify the student
+      try {
+        await storage.createNotification({
+          userId: proposal.studentId,
+          type: "session_rejected",
+          title: "Session Rejected",
+          message: `Your tutoring session request has been declined. ${req.body.tutorResponse || ""}`.trim(),
+          link: "/sessions",
+          isRead: false,
+          relatedId: proposal.id,
+        });
+      } catch (notifError) {
+        console.error("Error creating notification:", notifError);
+      }
+
+      res.json(updated);
+    } catch (error) {
+      console.error("Error rejecting proposal:", error);
+      res.status(500).json({ message: "Failed to reject proposal" });
+    }
+  });
+
+  // ==========================================
+  // TUTORING SESSION ROUTES
+  // ==========================================
+
+  // Get sessions for current user (filtered by role)
+  app.get('/api/tutoring-sessions', isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const userId = req.user?.claims?.sub;
+      if (!userId) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+      
+      const user = await storage.getUser(userId);
+      if (!user) {
+        return res.status(404).json({ message: "User not found" });
+      }
+
+      const status = req.query.status as TutoringSessionStatus | undefined;
+      let sessions;
+      
+      if (user.role === "tutor") {
+        sessions = await storage.getTutoringSessionsByTutor(userId, status);
+      } else if (user.role === "student") {
+        sessions = await storage.getTutoringSessionsByStudent(userId, status);
+      } else {
+        return res.status(403).json({ message: "Only tutors and students can view sessions" });
+      }
+      
+      res.json(sessions);
+    } catch (error) {
+      console.error("Error fetching sessions:", error);
+      res.status(500).json({ message: "Failed to fetch sessions" });
+    }
+  });
+
+  // Get single session details
+  app.get('/api/tutoring-sessions/:id', isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const userId = req.user?.claims?.sub;
+      if (!userId) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+      
+      const session = await storage.getTutoringSession(req.params.id);
+      if (!session) {
+        return res.status(404).json({ message: "Session not found" });
+      }
+      
+      // Only tutor, student, or admin/manager can view
+      const user = await storage.getUser(userId);
+      if (!user) {
+        return res.status(404).json({ message: "User not found" });
+      }
+      
+      if (session.tutorId !== userId && session.studentId !== userId && 
+          user.role !== "admin" && user.role !== "manager") {
+        return res.status(403).json({ message: "Access denied" });
+      }
+      
+      res.json(session);
+    } catch (error) {
+      console.error("Error fetching session:", error);
+      res.status(500).json({ message: "Failed to fetch session" });
+    }
+  });
+
+  // Join session (student or tutor)
+  app.post('/api/tutoring-sessions/:id/join', isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const userId = req.user?.claims?.sub;
+      if (!userId) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+      
+      const session = await storage.getTutoringSession(req.params.id);
+      if (!session) {
+        return res.status(404).json({ message: "Session not found" });
+      }
+      
+      const isTutor = session.tutorId === userId;
+      const isStudent = session.studentId === userId;
+      
+      if (!isTutor && !isStudent) {
+        return res.status(403).json({ message: "You are not a participant of this session" });
+      }
+      
+      if (session.status !== "scheduled" && session.status !== "in_progress") {
+        return res.status(400).json({ message: `Cannot join a session with status: ${session.status}` });
+      }
+
+      const now = new Date();
+      const updates: any = {};
+
+      if (isStudent) {
+        // Check hour wallet balance before allowing student to join
+        const wallet = await storage.getHourWalletByStudentCourse(userId, session.courseId);
+        const balance = wallet ? wallet.purchasedMinutes - wallet.consumedMinutes : 0;
+        
+        if (balance <= 0) {
+          return res.status(402).json({ message: "Insufficient hour balance. Please purchase more hours." });
+        }
+        
+        updates.studentJoinTime = now;
+      }
+
+      if (isTutor) {
+        updates.tutorJoinTime = now;
+        
+        // Check tutor lateness (>10 minutes after scheduled start)
+        const scheduledStart = new Date(session.scheduledStartTime);
+        const latenessThreshold = new Date(scheduledStart.getTime() + 10 * 60 * 1000);
+        if (now > latenessThreshold) {
+          updates.tutorLate = true;
+        }
+      }
+
+      // If both have joined (or first one joining and session is scheduled), start the session
+      if (session.status === "scheduled") {
+        const otherJoined = isTutor ? session.studentJoinTime : session.tutorJoinTime;
+        if (otherJoined || (updates.studentJoinTime && updates.tutorJoinTime)) {
+          updates.status = "in_progress";
+          updates.actualStartTime = now;
+        }
+      }
+
+      const updatedSession = await storage.updateTutoringSession(req.params.id, updates);
+      res.json(updatedSession);
+    } catch (error) {
+      console.error("Error joining session:", error);
+      res.status(500).json({ message: "Failed to join session" });
+    }
+  });
+
+  // End session
+  app.post('/api/tutoring-sessions/:id/end', isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const userId = req.user?.claims?.sub;
+      if (!userId) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+      
+      const session = await storage.getTutoringSession(req.params.id);
+      if (!session) {
+        return res.status(404).json({ message: "Session not found" });
+      }
+      
+      if (session.tutorId !== userId && session.studentId !== userId) {
+        return res.status(403).json({ message: "You are not a participant of this session" });
+      }
+      
+      if (session.status !== "in_progress") {
+        return res.status(400).json({ message: "Session is not in progress" });
+      }
+
+      const now = new Date();
+      const actualStart = session.actualStartTime ? new Date(session.actualStartTime) : now;
+      const durationMs = now.getTime() - actualStart.getTime();
+      const durationMinutes = Math.ceil(durationMs / (1000 * 60));
+      
+      // Round up to nearest 15-minute block for billing
+      const billableMinutes = Math.ceil(durationMinutes / 15) * 15;
+
+      // Deduct from student's wallet
+      await storage.deductMinutesFromWallet(session.studentId, session.courseId, billableMinutes);
+
+      const updatedSession = await storage.updateTutoringSession(req.params.id, {
+        status: "completed",
+        actualEndTime: now,
+        billableMinutes,
+      });
+
+      res.json(updatedSession);
+    } catch (error) {
+      console.error("Error ending session:", error);
+      res.status(500).json({ message: "Failed to end session" });
+    }
+  });
+
+  // Postpone session
+  app.patch('/api/tutoring-sessions/:id/postpone', isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const userId = req.user?.claims?.sub;
+      if (!userId) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+      
+      const session = await storage.getTutoringSession(req.params.id);
+      if (!session) {
+        return res.status(404).json({ message: "Session not found" });
+      }
+      
+      if (session.tutorId !== userId && session.studentId !== userId) {
+        return res.status(403).json({ message: "You are not a participant of this session" });
+      }
+      
+      if (session.status !== "scheduled") {
+        return res.status(400).json({ message: "Only scheduled sessions can be postponed" });
+      }
+
+      const updatedSession = await storage.updateTutoringSession(req.params.id, {
+        status: "postponed",
+        notes: req.body.reason || "Session postponed",
+      });
+
+      // Notify the other participant
+      const otherUserId = session.tutorId === userId ? session.studentId : session.tutorId;
+      try {
+        await storage.createNotification({
+          userId: otherUserId,
+          type: "session_postponed",
+          title: "Session Postponed",
+          message: `Your tutoring session has been postponed. ${req.body.reason || ""}`.trim(),
+          link: "/sessions",
+          isRead: false,
+          relatedId: session.id,
+        });
+      } catch (notifError) {
+        console.error("Error creating notification:", notifError);
+      }
+
+      res.json(updatedSession);
+    } catch (error) {
+      console.error("Error postponing session:", error);
+      res.status(500).json({ message: "Failed to postpone session" });
+    }
+  });
+
+  // Cancel session
+  app.patch('/api/tutoring-sessions/:id/cancel', isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const userId = req.user?.claims?.sub;
+      if (!userId) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+      
+      const session = await storage.getTutoringSession(req.params.id);
+      if (!session) {
+        return res.status(404).json({ message: "Session not found" });
+      }
+      
+      if (session.tutorId !== userId && session.studentId !== userId) {
+        return res.status(403).json({ message: "You are not a participant of this session" });
+      }
+      
+      if (session.status === "completed" || session.status === "cancelled") {
+        return res.status(400).json({ message: "Session cannot be cancelled" });
+      }
+
+      const updatedSession = await storage.updateTutoringSession(req.params.id, {
+        status: "cancelled",
+        notes: req.body.reason || "Session cancelled",
+      });
+
+      // Notify the other participant
+      const otherUserId = session.tutorId === userId ? session.studentId : session.tutorId;
+      try {
+        await storage.createNotification({
+          userId: otherUserId,
+          type: "session_cancelled",
+          title: "Session Cancelled",
+          message: `Your tutoring session has been cancelled. ${req.body.reason || ""}`.trim(),
+          link: "/sessions",
+          isRead: false,
+          relatedId: session.id,
+        });
+      } catch (notifError) {
+        console.error("Error creating notification:", notifError);
+      }
+
+      res.json(updatedSession);
+    } catch (error) {
+      console.error("Error cancelling session:", error);
+      res.status(500).json({ message: "Failed to cancel session" });
+    }
+  });
+
+  // ==========================================
+  // HOUR WALLET ROUTES
+  // ==========================================
+
+  // Get student's own wallets
+  app.get('/api/hour-wallets/student', isAuthenticated, requireRole("student"), async (req: Request, res: Response) => {
+    try {
+      const studentId = req.user?.claims?.sub;
+      if (!studentId) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+      const wallets = await storage.getHourWalletsByStudent(studentId);
+      res.json(wallets);
+    } catch (error) {
+      console.error("Error fetching wallets:", error);
+      res.status(500).json({ message: "Failed to fetch wallets" });
+    }
+  });
+
+  // Get wallet for specific student/course (manager/admin view)
+  app.get('/api/hour-wallets/:studentId/:courseId', isAuthenticated, requireRole("manager", "admin"), async (req: Request, res: Response) => {
+    try {
+      const wallet = await storage.getHourWalletByStudentCourse(req.params.studentId, req.params.courseId);
+      if (!wallet) {
+        return res.status(404).json({ message: "Wallet not found" });
+      }
+      res.json(wallet);
+    } catch (error) {
+      console.error("Error fetching wallet:", error);
+      res.status(500).json({ message: "Failed to fetch wallet" });
+    }
+  });
+
+  // Create or add hours to wallet (manager/admin)
+  app.post('/api/hour-wallets', isAuthenticated, requireRole("manager", "admin"), async (req: Request, res: Response) => {
+    try {
+      const { studentId, courseId, minutes } = req.body;
+      
+      if (!studentId || !courseId || !minutes || minutes <= 0) {
+        return res.status(400).json({ message: "Invalid data: studentId, courseId, and positive minutes required" });
+      }
+
+      // Check if wallet exists
+      const existingWallet = await storage.getHourWalletByStudentCourse(studentId, courseId);
+      
+      if (existingWallet) {
+        // Add to existing wallet
+        const updated = await storage.addMinutesToWallet(studentId, courseId, minutes);
+        res.json(updated);
+      } else {
+        // Create new wallet
+        const validated = insertHourWalletSchema.parse({
+          studentId,
+          courseId,
+          purchasedMinutes: minutes,
+          consumedMinutes: 0,
+        });
+        const wallet = await storage.createHourWallet(validated);
+        res.status(201).json(wallet);
+      }
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Invalid data", errors: error.errors });
+      }
+      console.error("Error creating/updating wallet:", error);
+      res.status(500).json({ message: "Failed to update wallet" });
     }
   });
 
