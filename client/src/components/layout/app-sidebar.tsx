@@ -11,6 +11,7 @@ import {
   UserCog,
   FileText,
   Calendar,
+  Wallet,
 } from "lucide-react";
 import {
   Sidebar,
@@ -129,6 +130,12 @@ const navItems: NavItem[] = [
     title: "Invoices",
     url: "/admin/invoices",
     icon: FileText,
+    roles: ["admin"],
+  },
+  {
+    title: "Payroll",
+    url: "/admin/payroll",
+    icon: Wallet,
     roles: ["admin"],
   },
   {
