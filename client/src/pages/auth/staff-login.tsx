@@ -37,12 +37,6 @@ export default function StaffLogin() {
     setIsSubmitting(true);
     setError("");
     
-    if (!email.endsWith("@melaniacalvin.com")) {
-      setError("Staff accounts must use @melaniacalvin.com email domain");
-      setIsSubmitting(false);
-      return;
-    }
-    
     if (!password) {
       setError("Please enter your password");
       setIsSubmitting(false);

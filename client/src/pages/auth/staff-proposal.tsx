@@ -80,12 +80,6 @@ export default function StaffProposal() {
     setDevSubmitting(true);
     setDevError("");
     
-    if (!devEmail.endsWith("@melaniacalvin.com")) {
-      setDevError("Staff accounts must use @melaniacalvin.com email domain");
-      setDevSubmitting(false);
-      return;
-    }
-    
     if (!devPassword || devPassword.length < 8) {
       setDevError("Password must be at least 8 characters long");
       setDevSubmitting(false);
