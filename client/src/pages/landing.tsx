@@ -54,9 +54,9 @@ export default function Landing() {
   return (
     <div className="min-h-screen bg-background">
       <header className="sticky top-0 z-50 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-        <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 md:px-8">
+        <div className="mx-auto flex h-20 max-w-7xl items-center justify-between px-4 md:px-8">
           <div className="flex items-center gap-3">
-            <img src={mcecLogo} alt="MCEC Logo" className="h-12 object-contain" data-testid="img-logo" />
+            <img src={mcecLogo} alt="MCEC Logo" className="h-20 object-contain" data-testid="img-logo" />
           </div>
           <div className="flex items-center gap-4">
             <ThemeToggle />
@@ -69,10 +69,10 @@ export default function Landing() {
 
       <main>
         <section className="relative overflow-hidden py-20 md:py-32">
-          <div className="absolute inset-0 bg-gradient-to-br from-primary/5 via-transparent to-primary/10" />
+          <div className="absolute inset-0 bg-gradient-to-br from-primary/20 via-transparent to-primary/10" />
           <div className="relative mx-auto max-w-7xl px-4 text-center md:px-8">
-            <h1 className="font-heading text-4xl font-bold tracking-tight md:text-6xl" data-testid="text-hero-title">
-              MELANIA CALVIN
+            <h1 className="font-tagline text-4xl font-bold tracking-tight md:text-6xl" data-testid="text-hero-title">
+              Melania Calvin
               <br />
               <span className="text-primary">Educational Consultants</span>
             </h1>

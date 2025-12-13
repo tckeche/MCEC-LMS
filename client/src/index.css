@@ -47,6 +47,14 @@
   --font-serif: Georgia, serif;
   --font-mono: Menlo, monospace;
   --font-heading: 'Space Grotesk', sans-serif;
+  --font-tagline: Helvetica, Arial, sans-serif;
+  
+  /* MCEC Brand Colors */
+  --mcec-blue-dark: 217 91% 35%;
+  --mcec-blue-bright: 210 100% 49%;
+  --mcec-green: 65 95% 55%;
+  --mcec-white: 0 0% 100%;
+  --mcec-burgundy: 355 85% 35%;
   --radius: .5rem;
   --shadow-2xs: 0px 2px 0px 0px hsl(0 0% 0% / 0.00);
   --shadow-xs: 0px 2px 0px 0px hsl(0 0% 0% / 0.00);
