@@ -3099,6 +3099,42 @@ export async function registerRoutes(
         if (newStatus === "approved" && currentStatus !== "approved") {
           safeUpdates.approvedById = dbUser.id;
           safeUpdates.approvedAt = new Date();
+          
+          // Check for unpaid invoice mismatches and create flags
+          const lines = await storage.getPayoutLines(payoutId);
+          const existingFlags = await storage.getPayoutFlags(payoutId);
+          const existingInvoiceFlags = new Set(
+            existingFlags
+              .filter(f => f.flagType === "unpaid_invoice")
+              .map(f => f.invoiceId)
+          );
+          const studentsChecked = new Set<string>();
+          
+          for (const line of lines) {
+            // Skip if we've already checked this student
+            if (studentsChecked.has(line.studentId)) continue;
+            studentsChecked.add(line.studentId);
+            
+            // Find unpaid invoices for this student in the payout period
+            const unpaidInvoices = await storage.getUnpaidInvoicesByStudentInPeriod(
+              line.studentId,
+              payout.periodStart,
+              payout.periodEnd
+            );
+            
+            // Create a flag for each unpaid invoice (skip if already flagged)
+            for (const invoice of unpaidInvoices) {
+              if (existingInvoiceFlags.has(invoice.id)) continue;
+              
+              await storage.createPayoutFlag({
+                payoutId,
+                invoiceId: invoice.id,
+                flagType: "unpaid_invoice",
+                description: `Tutor payment includes sessions for student with unpaid invoice ${invoice.invoiceNumber} (Status: ${invoice.status}, Outstanding: ${invoice.amountOutstanding})`,
+                isResolved: false,
+              });
+            }
+          }
         }
         
         // Set paid timestamp when transitioning to paid
@@ -3108,7 +3144,10 @@ export async function registerRoutes(
       }
       
       const updatedPayout = await storage.updatePayout(payoutId, safeUpdates);
-      res.json(updatedPayout);
+      
+      // Return payout with details including any new flags
+      const payoutWithDetails = await storage.getPayoutWithDetails(payoutId);
+      res.json(payoutWithDetails || updatedPayout);
     } catch (error) {
       console.error("Error updating payout:", error);
       res.status(500).json({ message: "Failed to update payout" });

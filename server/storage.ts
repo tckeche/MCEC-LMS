@@ -262,6 +262,13 @@ export interface IStorage {
     oldestOverdueDate: Date | null;
   }>;
   
+  // Unpaid invoice detection for payroll
+  getUnpaidInvoicesByStudentInPeriod(
+    studentId: string, 
+    periodStart: Date, 
+    periodEnd: Date
+  ): Promise<Invoice[]>;
+  
   // ==========================================
   // PAYROLL SYSTEM OPERATIONS
   // ==========================================
@@ -1604,6 +1611,28 @@ export class DatabaseStorage implements IStorage {
       totalOverdueAmount: totalOverdueAmount.toFixed(2),
       oldestOverdueDate,
     };
+  }
+
+  async getUnpaidInvoicesByStudentInPeriod(
+    studentId: string,
+    periodStart: Date,
+    periodEnd: Date
+  ): Promise<Invoice[]> {
+    return db
+      .select()
+      .from(invoices)
+      .where(and(
+        eq(invoices.studentId, studentId),
+        lte(invoices.billingPeriodStart, periodEnd),
+        gte(invoices.billingPeriodEnd, periodStart),
+        or(
+          eq(invoices.status, "draft"),
+          eq(invoices.status, "awaiting_payment"),
+          eq(invoices.status, "overdue"),
+          eq(invoices.status, "disputed")
+        )
+      ))
+      .orderBy(invoices.billingPeriodStart);
   }
 
   // ==========================================
