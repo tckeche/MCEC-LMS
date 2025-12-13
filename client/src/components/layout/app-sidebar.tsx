@@ -13,6 +13,7 @@ import {
   Calendar,
   Wallet,
   UserCheck,
+  LogOut,
 } from "lucide-react";
 import {
   Sidebar,
@@ -171,7 +172,7 @@ const navItems: NavItem[] = [
   },
   {
     title: "Settings",
-    url: "/settings",
+    url: "/admin/settings",
     icon: Settings,
     roles: ["admin"],
   },
@@ -249,10 +250,20 @@ export function AppSidebar() {
         )}
       </SidebarContent>
       <SidebarFooter className="border-t px-4 py-3">
-        <p className="text-xs text-muted-foreground">
-          Logged in as{" "}
-          <span className="font-medium capitalize">{user.role}</span>
-        </p>
+        <div className="flex items-center justify-between gap-2">
+          <p className="text-xs text-muted-foreground">
+            Logged in as{" "}
+            <span className="font-medium capitalize">{user.role}</span>
+          </p>
+          <a
+            href="/api/logout"
+            className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+            data-testid="button-logout-sidebar"
+          >
+            <LogOut className="h-3 w-3" />
+            <span>Sign Out</span>
+          </a>
+        </div>
       </SidebarFooter>
     </Sidebar>
   );
