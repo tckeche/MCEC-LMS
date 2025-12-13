@@ -1107,19 +1107,86 @@ export async function registerRoutes(
         averageCourseGrade = Math.round(totalPercentage / tutorGrades.length);
       }
       
+      // Get tutor's completed sessions for hours calculation
+      const allSessions = await storage.getTutoringSessionsByTutor(tutorId);
+      const completedSessions = allSessions.filter(s => s.status === "completed");
+      
+      // Calculate total hours (from billableMinutes or scheduledMinutes)
+      const totalMinutes = completedSessions.reduce((sum, session) => {
+        return sum + (session.billableMinutes || session.scheduledMinutes || 0);
+      }, 0);
+      const totalHours = Math.round(totalMinutes / 60 * 10) / 10;
+      
+      // Calculate hours this month
+      const now = new Date();
+      const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+      const sessionsThisMonth = completedSessions.filter(s => {
+        const sessionDate = new Date(s.scheduledStartTime);
+        return sessionDate >= startOfMonth;
+      });
+      const monthMinutes = sessionsThisMonth.reduce((sum, session) => {
+        return sum + (session.billableMinutes || session.scheduledMinutes || 0);
+      }, 0);
+      const hoursThisMonth = Math.round(monthMinutes / 60 * 10) / 10;
+      
+      // Get upcoming sessions for calendar
+      const upcomingSessions = allSessions
+        .filter(s => s.status === "scheduled" && new Date(s.scheduledStartTime) >= now)
+        .sort((a, b) => new Date(a.scheduledStartTime).getTime() - new Date(b.scheduledStartTime).getTime())
+        .slice(0, 5)
+        .map(session => ({
+          id: session.id,
+          studentName: session.student ? `${session.student.firstName || ''} ${session.student.lastName || ''}`.trim() : 'Unknown',
+          scheduledStartTime: session.scheduledStartTime.toISOString(),
+          scheduledMinutes: session.scheduledMinutes,
+          status: session.status,
+        }));
+      
       res.json({
         stats: {
           totalCourses: tutorCourses.length,
           totalStudents,
           pendingSubmissions,
           averageCourseGrade,
+          hoursThisMonth,
+          totalHours,
         },
         courses: tutorCourses,
         recentSubmissions: recentSubmissions.slice(0, 5),
+        upcomingSessions,
       });
     } catch (error) {
       console.error("Error fetching tutor dashboard:", error);
       res.status(500).json({ message: "Failed to fetch dashboard data" });
+    }
+  });
+
+  // Get tutor's sessions for calendar view
+  app.get('/api/tutor/sessions', isAuthenticated, requireRole("tutor"), async (req: Request, res: Response) => {
+    try {
+      const tutorId = req.user?.claims?.sub;
+      if (!tutorId) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+      
+      const sessions = await storage.getTutoringSessionsByTutor(tutorId);
+      
+      // Return sessions with relevant data for calendar
+      const formattedSessions = sessions.map(session => ({
+        id: session.id,
+        studentId: session.studentId,
+        studentName: session.student ? `${session.student.firstName || ''} ${session.student.lastName || ''}`.trim() : 'Unknown',
+        scheduledStartTime: session.scheduledStartTime.toISOString(),
+        scheduledMinutes: session.scheduledMinutes,
+        billableMinutes: session.billableMinutes,
+        status: session.status,
+        notes: session.notes,
+      }));
+      
+      res.json(formattedSessions);
+    } catch (error) {
+      console.error("Error fetching tutor sessions:", error);
+      res.status(500).json({ message: "Failed to fetch sessions" });
     }
   });
 
