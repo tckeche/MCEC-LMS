@@ -56,8 +56,8 @@ const requireRole = (...roles: UserRole[]) => {
     }
     
     const user = await storage.getUser(userId);
-    if (!user || !roles.includes(user.role as UserRole)) {
-      return res.status(403).json({ message: "Forbidden: insufficient permissions" });
+    if (!user) {
+      return res.status(403).json({ message: "Forbidden: user not found" });
     }
     
     // Check if user account is active
@@ -65,11 +65,46 @@ const requireRole = (...roles: UserRole[]) => {
       return res.status(403).json({ message: "Account is deactivated" });
     }
     
+    // Super Admin bypasses all role checks
+    if (user.isSuperAdmin) {
+      (req as any).dbUser = user;
+      return next();
+    }
+    
+    // Regular role check
+    if (!roles.includes(user.role as UserRole)) {
+      return res.status(403).json({ message: "Forbidden: insufficient permissions" });
+    }
+    
     // Attach user to request for ownership checks
     (req as any).dbUser = user;
     
     next();
   };
+};
+
+// Super Admin only middleware
+const requireSuperAdmin = async (req: Request, res: Response, next: NextFunction) => {
+  const userId = req.user?.claims?.sub;
+  if (!userId) {
+    return res.status(401).json({ message: "Unauthorized" });
+  }
+  
+  const user = await storage.getUser(userId);
+  if (!user) {
+    return res.status(403).json({ message: "Forbidden: user not found" });
+  }
+  
+  if (!user.isActive) {
+    return res.status(403).json({ message: "Account is deactivated" });
+  }
+  
+  if (!user.isSuperAdmin) {
+    return res.status(403).json({ message: "Forbidden: Super Admin access required" });
+  }
+  
+  (req as any).dbUser = user;
+  next();
 };
 
 // Zod schemas for PATCH validation (allowing partial updates with safe fields only)
@@ -316,6 +351,224 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Error updating user status:", error);
       res.status(500).json({ message: "Failed to update user status" });
+    }
+  });
+
+  // ==========================================
+  // SUPER ADMIN ROUTES
+  // ==========================================
+
+  // Get all users with full details (Super Admin only)
+  app.get('/api/super-admin/users', isAuthenticated, requireSuperAdmin, async (req: Request, res: Response) => {
+    try {
+      const users = await storage.getAllUsers();
+      res.json(users);
+    } catch (error) {
+      console.error("Error fetching users:", error);
+      res.status(500).json({ message: "Failed to fetch users" });
+    }
+  });
+
+  // Update user's admin level (Super Admin only)
+  app.patch('/api/super-admin/users/:id/admin-level', isAuthenticated, requireSuperAdmin, async (req: Request, res: Response) => {
+    try {
+      const dbUser = (req as any).dbUser;
+      const { adminLevel } = req.body;
+      
+      if (typeof adminLevel !== 'number' || adminLevel < 1 || adminLevel > 5) {
+        return res.status(400).json({ message: "Admin level must be between 1 and 5" });
+      }
+      
+      const targetUser = await storage.getUser(req.params.id);
+      if (!targetUser) {
+        return res.status(404).json({ message: "User not found" });
+      }
+      
+      const previousValue = targetUser.adminLevel?.toString() || "1";
+      
+      const user = await storage.updateUserAdminLevel(req.params.id, adminLevel);
+      
+      await storage.createAuditLog({
+        performedById: dbUser.id,
+        targetUserId: req.params.id,
+        action: "update_admin_level",
+        previousValue,
+        newValue: adminLevel.toString(),
+        metadata: { targetEmail: targetUser.email },
+      });
+      
+      res.json(user);
+    } catch (error) {
+      console.error("Error updating admin level:", error);
+      res.status(500).json({ message: "Failed to update admin level" });
+    }
+  });
+
+  // Toggle Super Admin status (Super Admin only)
+  app.patch('/api/super-admin/users/:id/super-admin', isAuthenticated, requireSuperAdmin, async (req: Request, res: Response) => {
+    try {
+      const dbUser = (req as any).dbUser;
+      const { isSuperAdmin } = req.body;
+      
+      if (typeof isSuperAdmin !== 'boolean') {
+        return res.status(400).json({ message: "isSuperAdmin must be a boolean" });
+      }
+      
+      if (req.params.id === dbUser.id) {
+        return res.status(400).json({ message: "Cannot modify your own Super Admin status" });
+      }
+      
+      const targetUser = await storage.getUser(req.params.id);
+      if (!targetUser) {
+        return res.status(404).json({ message: "User not found" });
+      }
+      
+      const previousValue = targetUser.isSuperAdmin.toString();
+      
+      const user = await storage.updateUserSuperAdmin(req.params.id, isSuperAdmin);
+      
+      await storage.createAuditLog({
+        performedById: dbUser.id,
+        targetUserId: req.params.id,
+        action: isSuperAdmin ? "grant_super_admin" : "revoke_super_admin",
+        previousValue,
+        newValue: isSuperAdmin.toString(),
+        metadata: { targetEmail: targetUser.email },
+      });
+      
+      res.json(user);
+    } catch (error) {
+      console.error("Error updating super admin status:", error);
+      res.status(500).json({ message: "Failed to update super admin status" });
+    }
+  });
+
+  // Update user role with audit logging (Super Admin only)
+  app.patch('/api/super-admin/users/:id/role', isAuthenticated, requireSuperAdmin, async (req: Request, res: Response) => {
+    try {
+      const dbUser = (req as any).dbUser;
+      const { role } = req.body;
+      
+      const validRoles = ["student", "parent", "tutor", "manager", "admin"];
+      if (!validRoles.includes(role)) {
+        return res.status(400).json({ message: "Invalid role" });
+      }
+      
+      const targetUser = await storage.getUser(req.params.id);
+      if (!targetUser) {
+        return res.status(404).json({ message: "User not found" });
+      }
+      
+      const previousValue = targetUser.role;
+      
+      const user = await storage.updateUserRole(req.params.id, role);
+      
+      await storage.createAuditLog({
+        performedById: dbUser.id,
+        targetUserId: req.params.id,
+        action: "update_role",
+        previousValue,
+        newValue: role,
+        metadata: { targetEmail: targetUser.email },
+      });
+      
+      res.json(user);
+    } catch (error) {
+      console.error("Error updating user role:", error);
+      res.status(500).json({ message: "Failed to update user role" });
+    }
+  });
+
+  // Update user fully (Super Admin only - can update multiple fields at once)
+  app.patch('/api/super-admin/users/:id', isAuthenticated, requireSuperAdmin, async (req: Request, res: Response) => {
+    try {
+      const dbUser = (req as any).dbUser;
+      const { role, adminLevel, isActive, status } = req.body;
+      
+      const targetUser = await storage.getUser(req.params.id);
+      if (!targetUser) {
+        return res.status(404).json({ message: "User not found" });
+      }
+      
+      const updateData: any = {};
+      const changes: string[] = [];
+      
+      if (role !== undefined) {
+        const validRoles = ["student", "parent", "tutor", "manager", "admin"];
+        if (!validRoles.includes(role)) {
+          return res.status(400).json({ message: "Invalid role" });
+        }
+        updateData.role = role;
+        changes.push(`role: ${targetUser.role} -> ${role}`);
+      }
+      
+      if (adminLevel !== undefined) {
+        if (typeof adminLevel !== 'number' || adminLevel < 1 || adminLevel > 5) {
+          return res.status(400).json({ message: "Admin level must be between 1 and 5" });
+        }
+        updateData.adminLevel = adminLevel;
+        changes.push(`adminLevel: ${targetUser.adminLevel} -> ${adminLevel}`);
+      }
+      
+      if (isActive !== undefined) {
+        if (typeof isActive !== 'boolean') {
+          return res.status(400).json({ message: "isActive must be a boolean" });
+        }
+        updateData.isActive = isActive;
+        changes.push(`isActive: ${targetUser.isActive} -> ${isActive}`);
+      }
+      
+      if (status !== undefined) {
+        const validStatuses = ["active", "pending", "rejected", "suspended"];
+        if (!validStatuses.includes(status)) {
+          return res.status(400).json({ message: "Invalid status" });
+        }
+        updateData.status = status;
+        changes.push(`status: ${targetUser.status} -> ${status}`);
+      }
+      
+      if (Object.keys(updateData).length === 0) {
+        return res.status(400).json({ message: "No valid fields to update" });
+      }
+      
+      const user = await storage.updateUserFull(req.params.id, updateData);
+      
+      await storage.createAuditLog({
+        performedById: dbUser.id,
+        targetUserId: req.params.id,
+        action: "update_user",
+        previousValue: JSON.stringify({ role: targetUser.role, adminLevel: targetUser.adminLevel, isActive: targetUser.isActive, status: targetUser.status }),
+        newValue: JSON.stringify(updateData),
+        metadata: { targetEmail: targetUser.email, changes },
+      });
+      
+      res.json(user);
+    } catch (error) {
+      console.error("Error updating user:", error);
+      res.status(500).json({ message: "Failed to update user" });
+    }
+  });
+
+  // Get audit logs (Super Admin only)
+  app.get('/api/super-admin/audit-logs', isAuthenticated, requireSuperAdmin, async (req: Request, res: Response) => {
+    try {
+      const limit = parseInt(req.query.limit as string) || 100;
+      const logs = await storage.getAuditLogs(limit);
+      res.json(logs);
+    } catch (error) {
+      console.error("Error fetching audit logs:", error);
+      res.status(500).json({ message: "Failed to fetch audit logs" });
+    }
+  });
+
+  // Get audit logs for specific user (Super Admin only)
+  app.get('/api/super-admin/audit-logs/user/:userId', isAuthenticated, requireSuperAdmin, async (req: Request, res: Response) => {
+    try {
+      const logs = await storage.getAuditLogsByUser(req.params.userId);
+      res.json(logs);
+    } catch (error) {
+      console.error("Error fetching user audit logs:", error);
+      res.status(500).json({ message: "Failed to fetch audit logs" });
     }
   });
 
