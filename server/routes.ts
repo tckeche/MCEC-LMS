@@ -234,12 +234,12 @@ export async function registerRoutes(
     }
   });
   
-  // Get all pending staff role requests (admin level 3+ only)
+  // Get all pending staff role requests (admin level 1+ - Staff)
   app.get('/api/staff/proposals', isAuthenticated, requireRole("admin"), async (req: Request, res: Response) => {
     try {
       const dbUser = (req as any).dbUser;
-      if (dbUser.adminLevel < 3) {
-        return res.status(403).json({ message: "Insufficient admin level. Level 3 required." });
+      if (dbUser.adminLevel < 1) {
+        return res.status(403).json({ message: "Insufficient admin level. Level 1 (Staff) required." });
       }
       
       const requests = await storage.getPendingStaffRequests();
@@ -250,12 +250,12 @@ export async function registerRoutes(
     }
   });
   
-  // Approve staff role request (admin level 3+ only)
+  // Approve staff role request (admin level 1+ - Staff)
   app.post('/api/staff/proposals/:id/approve', isAuthenticated, requireRole("admin"), async (req: Request, res: Response) => {
     try {
       const dbUser = (req as any).dbUser;
-      if (dbUser.adminLevel < 3) {
-        return res.status(403).json({ message: "Insufficient admin level. Level 3 required." });
+      if (dbUser.adminLevel < 1) {
+        return res.status(403).json({ message: "Insufficient admin level. Level 1 (Staff) required." });
       }
       
       const reviewerId = req.user?.claims?.sub;
@@ -271,12 +271,12 @@ export async function registerRoutes(
     }
   });
   
-  // Reject staff role request (admin level 3+ only)
+  // Reject staff role request (admin level 1+ - Staff)
   app.post('/api/staff/proposals/:id/reject', isAuthenticated, requireRole("admin"), async (req: Request, res: Response) => {
     try {
       const dbUser = (req as any).dbUser;
-      if (dbUser.adminLevel < 3) {
-        return res.status(403).json({ message: "Insufficient admin level. Level 3 required." });
+      if (dbUser.adminLevel < 1) {
+        return res.status(403).json({ message: "Insufficient admin level. Level 1 (Staff) required." });
       }
       
       const reviewerId = req.user?.claims?.sub;
@@ -2730,7 +2730,7 @@ export async function registerRoutes(
     })).min(1),
   });
 
-  // Get all invoices (admin/manager see all, parents see their own)
+  // Get all invoices (admin level 3+ see all, parents see their own)
   app.get('/api/invoices', isAuthenticated, requireRole("admin", "manager", "parent"), async (req: Request, res: Response) => {
     try {
       const dbUser = (req as any).dbUser;
@@ -2740,6 +2740,10 @@ export async function registerRoutes(
         const invoices = await storage.getInvoicesByParent(dbUser.id);
         res.json(invoices);
       } else {
+        // Admin/manager accessing all invoices requires level 3 (Finance)
+        if (dbUser.adminLevel < 3 && !dbUser.isSuperAdmin) {
+          return res.status(403).json({ message: "Insufficient admin level. Level 3 (Finance) required." });
+        }
         const invoices = await storage.getAllInvoices(status);
         res.json(invoices);
       }
@@ -2790,9 +2794,14 @@ export async function registerRoutes(
     }
   });
 
-  // Create invoice with line items (admin/manager only)
+  // Create invoice with line items (admin level 3+ - Finance)
   app.post('/api/invoices', isAuthenticated, requireRole("admin", "manager"), async (req: Request, res: Response) => {
     try {
+      const dbUser = (req as any).dbUser;
+      if (dbUser.adminLevel < 3 && !dbUser.isSuperAdmin) {
+        return res.status(403).json({ message: "Insufficient admin level. Level 3 (Finance) required." });
+      }
+      
       const validated = createInvoiceRequestSchema.parse(req.body);
       
       // Generate invoice number
@@ -2848,9 +2857,14 @@ export async function registerRoutes(
     }
   });
 
-  // Update invoice (admin/manager only, draft invoices only)
+  // Update invoice (admin level 3+ - Finance, draft invoices only)
   app.patch('/api/invoices/:id', isAuthenticated, requireRole("admin", "manager"), async (req: Request, res: Response) => {
     try {
+      const dbUser = (req as any).dbUser;
+      if (dbUser.adminLevel < 3 && !dbUser.isSuperAdmin) {
+        return res.status(403).json({ message: "Insufficient admin level. Level 3 (Finance) required." });
+      }
+      
       const invoice = await storage.getInvoice(req.params.id);
       if (!invoice) {
         return res.status(404).json({ message: "Invoice not found" });
@@ -2885,9 +2899,14 @@ export async function registerRoutes(
     }
   });
 
-  // Send invoice (mark as awaiting_payment)
+  // Send invoice (admin level 3+ - Finance)
   app.post('/api/invoices/:id/send', isAuthenticated, requireRole("admin", "manager"), async (req: Request, res: Response) => {
     try {
+      const dbUser = (req as any).dbUser;
+      if (dbUser.adminLevel < 3 && !dbUser.isSuperAdmin) {
+        return res.status(403).json({ message: "Insufficient admin level. Level 3 (Finance) required." });
+      }
+      
       const invoice = await storage.getInvoice(req.params.id);
       if (!invoice) {
         return res.status(404).json({ message: "Invoice not found" });
@@ -3587,9 +3606,14 @@ export async function registerRoutes(
   // PAYROLL ROUTES
   // ==========================================
 
-  // Get all payouts (admin/manager only)
+  // Get all payouts (admin level 3+ - Finance)
   app.get('/api/payouts', isAuthenticated, requireRole("admin", "manager"), async (req: Request, res: Response) => {
     try {
+      const dbUser = (req as any).dbUser;
+      if (dbUser.adminLevel < 3 && !dbUser.isSuperAdmin) {
+        return res.status(403).json({ message: "Insufficient admin level. Level 3 (Finance) required." });
+      }
+      
       const status = req.query.status as PayoutStatus | undefined;
       const payouts = await storage.getAllPayouts(status);
       res.json(payouts);
@@ -3640,9 +3664,14 @@ export async function registerRoutes(
     }
   });
 
-  // Create payout (admin/manager only)
+  // Create payout (admin level 3+ - Finance)
   app.post('/api/payouts', isAuthenticated, requireRole("admin", "manager"), async (req: Request, res: Response) => {
     try {
+      const dbUser = (req as any).dbUser;
+      if (dbUser.adminLevel < 3 && !dbUser.isSuperAdmin) {
+        return res.status(403).json({ message: "Insufficient admin level. Level 3 (Finance) required." });
+      }
+      
       const result = insertPayoutSchema.safeParse(req.body);
       if (!result.success) {
         return res.status(400).json({ message: "Invalid payout data", errors: result.error.errors });

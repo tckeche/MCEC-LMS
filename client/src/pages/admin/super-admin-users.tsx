@@ -251,7 +251,7 @@ export default function SuperAdminUsers() {
                         </TableCell>
                         <TableCell>
                           <Select
-                            value={String(user.adminLevel ?? 0)}
+                            value={String(user.adminLevel ?? 1)}
                             onValueChange={(value) =>
                               updateAdminLevelMutation.mutate({
                                 userId: user.id,
@@ -260,16 +260,14 @@ export default function SuperAdminUsers() {
                             }
                             data-testid={`select-admin-level-${user.id}`}
                           >
-                            <SelectTrigger className="w-20">
+                            <SelectTrigger className="w-40">
                               <SelectValue />
                             </SelectTrigger>
                             <SelectContent>
-                              <SelectItem value="0">0</SelectItem>
-                              <SelectItem value="1">1</SelectItem>
-                              <SelectItem value="2">2</SelectItem>
-                              <SelectItem value="3">3</SelectItem>
-                              <SelectItem value="4">4</SelectItem>
-                              <SelectItem value="5">5</SelectItem>
+                              <SelectItem value="1">1 - Staff</SelectItem>
+                              <SelectItem value="2">2 - Manager</SelectItem>
+                              <SelectItem value="3">3 - Manager (Finance)</SelectItem>
+                              <SelectItem value="4">4 - Super Admin</SelectItem>
                             </SelectContent>
                           </Select>
                         </TableCell>
