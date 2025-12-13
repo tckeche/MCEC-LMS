@@ -195,7 +195,7 @@ export function AppSidebar() {
 
   if (!user) return null;
 
-  const effectiveRole = user.isSuperAdmin && viewAsRole ? viewAsRole : user.role;
+  const effectiveRole = user?.isSuperAdmin && viewAsRole ? viewAsRole : (user?.role || "student");
 
   const filteredItems = navItems.filter((item) => {
     if (item.superAdminOnly) {
@@ -269,7 +269,7 @@ export function AppSidebar() {
         <div className="flex items-center justify-between gap-2">
           <p className="text-xs text-muted-foreground">
             Logged in as{" "}
-            <span className="font-medium capitalize">{user.role}</span>
+            <span className="font-medium capitalize">{user?.role || "User"}</span>
           </p>
           <a
             href="/api/logout"

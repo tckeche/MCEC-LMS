@@ -10,22 +10,6 @@ import { useToast } from "@/hooks/use-toast";
 import { queryClient } from "@/lib/queryClient";
 import mcecLogo from "@assets/MCEC_Transparent_Logo_1765615854771.jpg";
 
-function getRoleBasedRedirect(role: string, isSuperAdmin: boolean): string {
-  if (isSuperAdmin) return "/";
-  switch (role) {
-    case "admin":
-      return "/";
-    case "manager":
-      return "/";
-    case "tutor":
-      return "/";
-    case "parent":
-      return "/";
-    case "student":
-    default:
-      return "/";
-  }
-}
 
 export default function StaffLogin() {
   const { toast } = useToast();
@@ -79,15 +63,17 @@ export default function StaffLogin() {
         throw new Error(data.message || "Failed to login");
       }
       
+      // Invalidate and refetch auth user to ensure hydration before redirect
       await queryClient.invalidateQueries({ queryKey: ["/api/auth/user"] });
+      await queryClient.fetchQuery({ queryKey: ["/api/auth/user"] });
       
       toast({
         title: "Success",
         description: "Login successful!",
       });
       
-      const redirectUrl = getRoleBasedRedirect(data.user.role, data.user.isSuperAdmin);
-      window.location.href = redirectUrl;
+      // Full page reload ensures App.tsx re-renders with hydrated user
+      window.location.href = data.redirect || "/";
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to login";
       setError(message);

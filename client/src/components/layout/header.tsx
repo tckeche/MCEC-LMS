@@ -100,11 +100,11 @@ export function Header({ onMenuClick, showMenuButton = false }: HeaderProps) {
                     {user.email}
                   </p>
                   <Badge
-                    variant={getRoleBadgeVariant(user.role)}
+                    variant={getRoleBadgeVariant(user?.role || "student")}
                     className="mt-1 w-fit capitalize"
                     data-testid="badge-user-role"
                   >
-                    {user.role}
+                    {user?.role || "User"}
                   </Badge>
                 </div>
               </DropdownMenuLabel>
