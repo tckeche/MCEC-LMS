@@ -7,6 +7,12 @@ import { storage } from "./storage";
 import crypto from "crypto";
 import { hashPassword, verifyPassword } from "./passwordUtils";
 
+declare module "express-session" {
+  interface SessionData {
+    userId: string;
+  }
+}
+
 // Check if Azure SSO is fully configured (both credentials required)
 const AZURE_SSO_CONFIGURED = !!(
   process.env.AZURE_CLIENT_ID && 
@@ -161,23 +167,11 @@ export function setupDevAuth(app: Express) {
           });
         }
         
-        // Create session
-        const sessionUser = {
-          claims: {
-            sub: user.id,
-            email: user.email,
-            first_name: user.firstName,
-            last_name: user.lastName,
-            profile_image_url: user.profileImageUrl,
-          },
-          access_token: "dev-token-" + crypto.randomUUID(),
-          refresh_token: "dev-refresh-" + crypto.randomUUID(),
-          expires_at: Math.floor(Date.now() / 1000) + 3600 * 24, // 24 hours
-        };
-        
-        req.login(sessionUser, (err) => {
+        // Create session using session-based auth
+        req.session.userId = user.id;
+        req.session.save((err) => {
           if (err) {
-            console.error("Login error:", err);
+            console.error("Session save error:", err);
             return res.status(500).json({ message: "Login failed" });
           }
           res.json({ message: "Login successful", redirect: "/" });
@@ -297,23 +291,11 @@ export function setupDevAuth(app: Express) {
           return res.status(500).json({ message: "Failed to create user" });
         }
         
-        // Create session
-        const sessionUser = {
-          claims: {
-            sub: user.id,
-            email: user.email,
-            first_name: user.firstName,
-            last_name: user.lastName,
-            profile_image_url: user.profileImageUrl,
-          },
-          access_token: "dev-token-" + crypto.randomUUID(),
-          refresh_token: "dev-refresh-" + crypto.randomUUID(),
-          expires_at: Math.floor(Date.now() / 1000) + 3600 * 24 * 7, // 7 days
-        };
-        
-        req.login(sessionUser, (err) => {
+        // Create session using session-based auth
+        req.session.userId = user.id;
+        req.session.save((err) => {
           if (err) {
-            console.error("Login error:", err);
+            console.error("Session save error:", err);
             return res.status(500).json({ message: "Login failed" });
           }
           res.json({ message: "Login successful", redirect: "/" });

@@ -101,6 +101,8 @@ export interface IStorage {
   // User operations (mandatory for Replit Auth)
   getUser(id: string): Promise<User | undefined>;
   upsertUser(user: UpsertUser): Promise<User>;
+  createUser(userData: Partial<UpsertUser> & { email: string }): Promise<User>;
+  updateUser(id: string, data: Partial<UpsertUser>): Promise<User | undefined>;
   
   // User management
   getAllUsers(): Promise<User[]>;
@@ -352,6 +354,36 @@ export class DatabaseStorage implements IStorage {
           updatedAt: new Date(),
         },
       })
+      .returning();
+    return user;
+  }
+
+  async createUser(userData: Partial<UpsertUser> & { email: string }): Promise<User> {
+    const [user] = await db
+      .insert(users)
+      .values({
+        email: userData.email,
+        firstName: userData.firstName || null,
+        lastName: userData.lastName || null,
+        profileImageUrl: userData.profileImageUrl || null,
+        role: userData.role || "student",
+        isActive: userData.isActive ?? true,
+        status: userData.status || "active",
+        isSuperAdmin: userData.isSuperAdmin || false,
+        adminLevel: userData.adminLevel || 1,
+        authProvider: userData.authProvider || "local",
+        passwordHash: userData.passwordHash || null,
+        phoneNumber: userData.phoneNumber || null,
+      })
+      .returning();
+    return user;
+  }
+
+  async updateUser(id: string, data: Partial<UpsertUser>): Promise<User | undefined> {
+    const [user] = await db
+      .update(users)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(users.id, id))
       .returning();
     return user;
   }

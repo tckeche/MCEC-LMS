@@ -99,6 +99,7 @@ export const authProviderEnum = pgEnum("auth_provider", [
   "replit",
   "microsoft",
   "phone_otp",
+  "local",
 ]);
 
 // Scheduling system enums

@@ -1,0 +1,74 @@
+We need to stabilise authentication and fix View-As behaviour in one clean migration.
+
+PROBLEM SUMMARY (for context, not to re-explain):
+- The app is still using Replit OIDC auth, causing redirects to replit.com/oidc and failures at /api/callback.
+- My owner account (tckeche@gmail.com) was created via Replit OIDC and does not have a password set.
+- When viewing as Tutor, creating a course hangs because backend auth is not truly established.
+- OTP for students/parents is not ready and should be disabled until Twilio is live.
+
+REQUIREMENTS (IMPLEMENT EXACTLY):
+
+PART A: REMOVE REPLIT OIDC AS AUTH PROVIDER
+1. Completely remove Replit OIDC as an authentication dependency.
+2. Stop using replitAuth.ts, setupAuth, or isAuthenticated from Replit.
+3. Remove or disable:
+   - Replit OIDC issuer usage (https://replit.com/oidc)
+   - /api/callback handler for Replit OIDC
+   - Any automatic redirects to Replit consent screens.
+4. Protected routes must no longer depend on Replit Auth in any way.
+
+PART B: USE APP-OWNED AUTH ONLY
+1. Use the existing app-owned auth system (email + password + sessions).
+2. Replace isAuthenticated middleware with a new middleware that:
+   - checks the app’s own session user
+   - does NOT redirect externally
+3. Ensure cookies/sessions continue to work with fetch/React Query.
+
+PART C: BOOTSTRAP OWNER SO I AM NEVER LOCKED OUT
+1. Implement a one-time bootstrap endpoint, enabled ONLY if an env var exists:
+   - ENV VAR: BOOTSTRAP_TOKEN
+2. Endpoint example:
+   POST /api/bootstrap/super-admin
+3. This endpoint must:
+   - Require BOOTSTRAP_TOKEN in a header
+   - Create or update user with email tckeche@gmail.com
+   - Set:
+     isSuperAdmin = true
+     isActive = true
+     status = "active"
+     role = "admin"
+     adminLevel = 4
+4. If this user does not have a password set:
+   - Allow setting a password via this endpoint
+5. This endpoint must:
+   - Refuse requests without the token
+   - Be safe to remove or disable after first use
+
+PART D: TEMPORARILY DISABLE OTP FOR STUDENTS AND PARENTS
+1. Remove OTP requirement for now.
+2. Allow students and parents to:
+   - Sign up with email + password
+   - Sign in with email + password
+3. Keep OTP code paths intact but inactive (for future Twilio integration).
+
+PART E: FIX VIEW-AS TUTOR COURSE CREATION
+1. Ensure "View As" only affects frontend routing and UI.
+2. Backend permissions must still resolve against the real logged-in Super Admin.
+3. Verify that POST /api/courses succeeds when:
+   - Logged in as Super Admin
+   - Viewing the app as Tutor
+4. The Create Course dialog must complete and persist the course.
+
+IMPORTANT CONSTRAINTS:
+- Do NOT change scheduling logic.
+- Do NOT change finance, invoices, payroll, or hour wallets.
+- Do NOT redesign UI.
+- This is an auth + permission stabilisation task only.
+
+After implementing:
+- The app must never redirect to Replit consent screens.
+- Staff login must work via email + password.
+- Students must log in without OTP.
+- I must always be able to log in as Super Admin.
+
+Implement carefully and test before replying.

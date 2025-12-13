@@ -2,7 +2,7 @@
 import type { Express, Request, Response, NextFunction } from "express";
 import type { Server } from "http";
 import { storage } from "./storage";
-import { setupAuth, isAuthenticated } from "./replitAuth";
+import { setupAuth, isAuthenticated } from "./auth";
 import { setupDevAuth } from "./devAuth";
 import {
   insertCourseSchema,
@@ -29,20 +29,16 @@ import {
 import { z } from "zod";
 import PDFDocument from "pdfkit";
 
-// Extend Express.User to include our claims
+// Extend Express Request to include dbUser from session auth
 declare global {
   namespace Express {
     interface User {
       claims: {
         sub: string;
-        email?: string;
-        first_name?: string;
-        last_name?: string;
-        profile_image_url?: string;
       };
-      access_token: string;
-      refresh_token: string;
-      expires_at: number;
+    }
+    interface Request {
+      dbUser?: import("@shared/schema").User;
     }
   }
 }
