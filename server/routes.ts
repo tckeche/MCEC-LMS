@@ -3216,5 +3216,288 @@ export async function registerRoutes(
     }
   });
 
+  // Generate PDF payslip for payout
+  app.get('/api/payouts/:id/pdf', isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const userId = req.user?.claims?.sub;
+      if (!userId) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+      
+      const user = await storage.getUser(userId);
+      if (!user) {
+        return res.status(401).json({ message: "User not found" });
+      }
+      
+      const payout = await storage.getPayoutWithDetails(req.params.id);
+      if (!payout) {
+        return res.status(404).json({ message: "Payout not found" });
+      }
+      
+      // Access control: admin/manager can see all, tutor can see their own
+      if (user.role !== "admin" && user.role !== "manager") {
+        if (payout.tutorId !== userId) {
+          return res.status(403).json({ message: "Access denied" });
+        }
+      }
+      
+      // Use the enriched data from getPayoutWithDetails
+      const lines = payout.lines || [];
+      const flags = payout.flags || [];
+      
+      // Create PDF document
+      const doc = new PDFDocument({ 
+        size: 'A4',
+        margin: 50,
+        info: {
+          Title: `Payslip - ${payout.tutor?.firstName || ''} ${payout.tutor?.lastName || ''}`,
+          Author: 'MCEC LMS',
+        }
+      });
+      
+      // Set response headers
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `attachment; filename="payslip-${payout.id.slice(0, 8)}.pdf"`);
+      
+      // Pipe to response
+      doc.pipe(res);
+      
+      // Helper functions
+      const formatCurrency = (amount: string | number, currency: string) => {
+        const num = typeof amount === 'string' ? parseFloat(amount) : amount;
+        const symbols: Record<string, string> = { ZAR: 'R', USD: '$', GBP: '£' };
+        return `${symbols[currency] || currency} ${num.toFixed(2)}`;
+      };
+      
+      const formatDate = (date: Date | string | null) => {
+        if (!date) return '-';
+        const d = new Date(date);
+        return d.toLocaleDateString('en-ZA', { 
+          year: 'numeric', 
+          month: 'long', 
+          day: 'numeric' 
+        });
+      };
+      
+      const formatMinutes = (minutes: number) => {
+        const hours = Math.floor(minutes / 60);
+        const mins = minutes % 60;
+        return `${hours}h ${mins}m`;
+      };
+      
+      // Document colors
+      const primaryColor = '#2563eb';
+      const grayColor = '#6b7280';
+      const darkColor = '#1f2937';
+      const warningColor = '#f59e0b';
+      
+      // Header
+      doc.fontSize(24)
+         .fillColor(primaryColor)
+         .text('MCEC', 50, 50)
+         .fontSize(10)
+         .fillColor(grayColor)
+         .text('Learning Management System', 50, 78);
+      
+      // Payslip title
+      doc.fontSize(28)
+         .fillColor(darkColor)
+         .text('PAYSLIP', 400, 50, { align: 'right' });
+      
+      // Status badge
+      const statusColors: Record<string, string> = {
+        draft: '#6b7280',
+        approved: '#10b981',
+        paid: '#2563eb',
+        on_hold: '#f59e0b',
+      };
+      
+      doc.fontSize(10)
+         .fillColor(statusColors[payout.status] || grayColor)
+         .text(payout.status.toUpperCase().replace('_', ' '), 400, 85, { align: 'right' });
+      
+      // Horizontal line
+      doc.moveTo(50, 110)
+         .lineTo(545, 110)
+         .strokeColor('#e5e7eb')
+         .stroke();
+      
+      // Tutor details section
+      doc.fontSize(10)
+         .fillColor(grayColor)
+         .text('PAYEE', 50, 130);
+      
+      doc.fontSize(12)
+         .fillColor(darkColor)
+         .text(`${payout.tutor?.firstName || ''} ${payout.tutor?.lastName || ''}`.trim() || 'Tutor', 50, 148)
+         .fontSize(10)
+         .fillColor(grayColor)
+         .text(payout.tutor?.email || '', 50, 165);
+      
+      // Right side - Payout details
+      doc.fontSize(10)
+         .fillColor(grayColor)
+         .text('Pay Period:', 350, 130)
+         .text('Total Hours:', 350, 148)
+         .text('Generated:', 350, 166);
+      
+      doc.fillColor(darkColor)
+         .text(`${formatDate(payout.periodStart)} - ${formatDate(payout.periodEnd)}`, 450, 130, { align: 'right' })
+         .text(formatMinutes(payout.totalMinutes), 450, 148, { align: 'right' })
+         .text(formatDate(payout.createdAt), 450, 166, { align: 'right' });
+      
+      // Line Items Table
+      const tableTop = 210;
+      const tableHeaders = ['Student', 'Course', 'Hours', 'Rate', 'Amount'];
+      const colWidths = [120, 140, 50, 70, 70];
+      const colPositions = [50, 170, 310, 360, 430];
+      
+      // Table header background
+      doc.rect(50, tableTop - 5, 495, 25)
+         .fillColor('#f3f4f6')
+         .fill();
+      
+      // Table headers
+      doc.fontSize(9)
+         .fillColor(grayColor);
+      
+      tableHeaders.forEach((header, i) => {
+        const align = i < 2 ? 'left' : 'right';
+        doc.text(header, colPositions[i], tableTop + 3, { 
+          width: colWidths[i], 
+          align: align as any
+        });
+      });
+      
+      // Table rows
+      let yPos = tableTop + 30;
+      doc.fontSize(9).fillColor(darkColor);
+      
+      for (const line of lines) {
+        // Use enriched student and course data from getPayoutWithDetails
+        const student = (line as any).student;
+        const course = (line as any).course;
+        
+        const studentName = student ? `${student.firstName || ''} ${student.lastName || ''}`.trim() : 'Student';
+        const courseName = course?.title || 'Course';
+        
+        doc.text(studentName, colPositions[0], yPos, { width: colWidths[0] });
+        doc.text(courseName, colPositions[1], yPos, { width: colWidths[1] });
+        doc.text(formatMinutes(line.minutes), colPositions[2], yPos, { width: colWidths[2], align: 'right' });
+        doc.text(formatCurrency(line.hourlyRate, payout.currency), colPositions[3], yPos, { width: colWidths[3], align: 'right' });
+        doc.text(formatCurrency(line.amount, payout.currency), colPositions[4], yPos, { width: colWidths[4], align: 'right' });
+        
+        yPos += 20;
+        
+        // Add line separator
+        doc.moveTo(50, yPos - 5)
+           .lineTo(545, yPos - 5)
+           .strokeColor('#e5e7eb')
+           .stroke();
+        
+        // Check if we need a new page
+        if (yPos > 650) {
+          doc.addPage();
+          yPos = 50;
+        }
+      }
+      
+      // Totals section
+      const totalsTop = yPos + 20;
+      
+      doc.fontSize(10)
+         .fillColor(grayColor)
+         .text('Gross Amount:', 350, totalsTop, { width: 80 })
+         .text('Deductions:', 350, totalsTop + 20, { width: 80 });
+      
+      doc.fillColor(darkColor)
+         .text(formatCurrency(payout.grossAmount, payout.currency), 430, totalsTop, { width: 80, align: 'right' })
+         .text(`-${formatCurrency(payout.deductions, payout.currency)}`, 430, totalsTop + 20, { width: 80, align: 'right' });
+      
+      // Total line
+      doc.moveTo(350, totalsTop + 40)
+         .lineTo(510, totalsTop + 40)
+         .strokeColor('#e5e7eb')
+         .stroke();
+      
+      doc.fontSize(12)
+         .font('Helvetica-Bold')
+         .fillColor(darkColor)
+         .text('Net Pay:', 350, totalsTop + 50, { width: 80 })
+         .text(formatCurrency(payout.netAmount, payout.currency), 430, totalsTop + 50, { width: 80, align: 'right' });
+      
+      // Flags/Warnings section (if any)
+      if (flags.length > 0) {
+        const flagsTop = totalsTop + 90;
+        
+        doc.fontSize(10)
+           .font('Helvetica-Bold')
+           .fillColor(warningColor)
+           .text('Flags/Warnings:', 50, flagsTop);
+        
+        doc.font('Helvetica')
+           .fontSize(9)
+           .fillColor(darkColor);
+        
+        let flagYPos = flagsTop + 18;
+        for (const flag of flags) {
+          const statusText = flag.isResolved ? '[RESOLVED]' : '[PENDING]';
+          const statusColor = flag.isResolved ? '#10b981' : warningColor;
+          
+          doc.fillColor(statusColor)
+             .text(statusText, 50, flagYPos, { continued: true })
+             .fillColor(darkColor)
+             .text(` ${flag.description}`, { width: 450 });
+          
+          flagYPos += 15;
+        }
+      }
+      
+      // Notes section
+      if (payout.notes) {
+        const notesTop = flags.length > 0 ? totalsTop + 90 + flags.length * 15 + 30 : totalsTop + 90;
+        
+        doc.fontSize(10)
+           .font('Helvetica')
+           .fillColor(grayColor)
+           .text('Notes:', 50, notesTop)
+           .fillColor(darkColor)
+           .text(payout.notes, 50, notesTop + 18, { width: 300 });
+      }
+      
+      // Approval information
+      if (payout.approvedById && payout.approvedAt) {
+        const approvalTop = 700;
+        doc.fontSize(9)
+           .fillColor(grayColor)
+           .text(`Approved by: ${payout.approvedBy?.firstName || ''} ${payout.approvedBy?.lastName || ''}`, 50, approvalTop)
+           .text(`Approved on: ${formatDate(payout.approvedAt)}`, 50, approvalTop + 12);
+      }
+      
+      // Paid date if applicable
+      if (payout.paidAt) {
+        const paidTop = payout.approvedById ? 730 : 700;
+        doc.fontSize(9)
+           .fillColor('#10b981')
+           .text(`Paid on: ${formatDate(payout.paidAt)}`, 50, paidTop);
+      }
+      
+      // Footer
+      const footerTop = 770;
+      doc.fontSize(9)
+         .font('Helvetica')
+         .fillColor(grayColor)
+         .text('This is a computer-generated document.', 50, footerTop, { align: 'center', width: 495 })
+         .text('MCEC Learning Management System', 50, footerTop + 12, { align: 'center', width: 495 });
+      
+      // Finalize PDF
+      doc.end();
+      
+    } catch (error) {
+      console.error("Error generating payslip PDF:", error);
+      res.status(500).json({ message: "Failed to generate PDF" });
+    }
+  });
+
   return httpServer;
 }
