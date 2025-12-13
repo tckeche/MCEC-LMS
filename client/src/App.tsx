@@ -29,6 +29,8 @@ import TutorAvailability from "@/pages/tutor/availability";
 import TutorProposals from "@/pages/tutor/proposals";
 import CalendarPage from "@/pages/calendar";
 import ManagerDashboard from "@/pages/manager/dashboard";
+import ManagerTutors from "@/pages/manager/tutors";
+import ManagerCourses from "@/pages/manager/courses";
 import AdminDashboard from "@/pages/admin/dashboard";
 import AdminUsers from "@/pages/admin/users";
 import AdminInvoices from "@/pages/admin/invoices";
@@ -119,6 +121,8 @@ function ManagerRoutes() {
     <Switch>
       <Route path="/" component={ManagerDashboard} />
       <Route path="/manager/overview" component={ManagerDashboard} />
+      <Route path="/manager/tutors" component={ManagerTutors} />
+      <Route path="/manager/courses" component={ManagerCourses} />
       <Route path="/announcements" component={Announcements} />
       <Route component={NotFound} />
     </Switch>
