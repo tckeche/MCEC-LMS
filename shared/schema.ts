@@ -87,6 +87,20 @@ export const notificationTypeEnum = pgEnum("notification_type", [
   "system",
 ]);
 
+// Authentication and user status enums
+export const userStatusEnum = pgEnum("user_status", [
+  "active",
+  "pending",
+  "rejected",
+  "suspended",
+]);
+
+export const authProviderEnum = pgEnum("auth_provider", [
+  "replit",
+  "microsoft",
+  "phone_otp",
+]);
+
 // Scheduling system enums
 export const proposalStatusEnum = pgEnum("proposal_status", [
   "pending",
@@ -123,8 +137,29 @@ export const users = pgTable("users", {
   profileImageUrl: varchar("profile_image_url"),
   role: userRoleEnum("role").default("student").notNull(),
   isActive: boolean("is_active").default(true).notNull(),
+  status: userStatusEnum("status").default("active").notNull(),
+  authProvider: authProviderEnum("auth_provider").default("replit"),
+  proposedRole: userRoleEnum("proposed_role"),
+  pendingNotes: text("pending_notes"),
+  phoneNumber: varchar("phone_number"),
+  adminLevel: integer("admin_level").default(1),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Staff Role Requests (for tracking approval workflow)
+export const staffRoleRequests = pgTable("staff_role_requests", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  proposedRole: userRoleEnum("proposed_role").notNull(),
+  notes: text("notes"),
+  status: proposalStatusEnum("status").default("pending").notNull(),
+  reviewedById: varchar("reviewed_by_id").references(() => users.id),
+  reviewedAt: timestamp("reviewed_at"),
+  rejectionReason: text("rejection_reason"),
+  createdAt: timestamp("created_at").defaultNow(),
 });
 
 // Parent-Child relationship
@@ -914,6 +949,23 @@ export type ParentChildWithDetails = ParentChild & {
 
 // User role type for type safety
 export type UserRole = "student" | "parent" | "tutor" | "manager" | "admin";
+export type UserStatus = "active" | "pending" | "rejected" | "suspended";
+export type AuthProvider = "replit" | "microsoft" | "phone_otp";
+
+// Staff Role Request types
+export const insertStaffRoleRequestSchema = createInsertSchema(staffRoleRequests).omit({
+  id: true,
+  createdAt: true,
+  reviewedAt: true,
+});
+
+export type StaffRoleRequest = typeof staffRoleRequests.$inferSelect;
+export type InsertStaffRoleRequest = z.infer<typeof insertStaffRoleRequestSchema>;
+
+export type StaffRoleRequestWithDetails = StaffRoleRequest & {
+  user: User;
+  reviewedBy?: User;
+};
 
 // Scheduling system types
 export type TutorAvailability = typeof tutorAvailability.$inferSelect;
