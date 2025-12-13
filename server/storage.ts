@@ -312,7 +312,7 @@ export interface IStorage {
   // User lookup operations for auth
   getUserByEmail(email: string): Promise<User | undefined>;
   getUserByPhone(phoneNumber: string): Promise<User | undefined>;
-  updateUserForStaffSignup(id: string, data: { status: UserStatus; authProvider: string; proposedRole: UserRole; role: UserRole }): Promise<User | undefined>;
+  updateUserForStaffSignup(id: string, data: { status: UserStatus; authProvider: string; proposedRole: UserRole; role: UserRole; passwordHash?: string }): Promise<User | undefined>;
   updateUserForPhoneSignup(id: string, data: { phoneNumber: string; role: UserRole; authProvider: string; status: UserStatus }): Promise<User | undefined>;
 }
 
@@ -1948,14 +1948,18 @@ export class DatabaseStorage implements IStorage {
     return user;
   }
 
-  async updateUserForStaffSignup(id: string, data: { status: UserStatus; authProvider: string; proposedRole: UserRole; role: UserRole }): Promise<User | undefined> {
-    const [user] = await db.update(users).set({
+  async updateUserForStaffSignup(id: string, data: { status: UserStatus; authProvider: string; proposedRole: UserRole; role: UserRole; passwordHash?: string }): Promise<User | undefined> {
+    const updateData: any = {
       status: data.status,
       authProvider: data.authProvider as any,
       proposedRole: data.proposedRole,
       role: data.role,
       updatedAt: new Date(),
-    }).where(eq(users.id, id)).returning();
+    };
+    if (data.passwordHash) {
+      updateData.passwordHash = data.passwordHash;
+    }
+    const [user] = await db.update(users).set(updateData).where(eq(users.id, id)).returning();
     return user;
   }
 

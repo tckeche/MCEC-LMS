@@ -143,6 +143,7 @@ export const users = pgTable("users", {
   pendingNotes: text("pending_notes"),
   phoneNumber: varchar("phone_number"),
   adminLevel: integer("admin_level").default(1),
+  passwordHash: text("password_hash"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });

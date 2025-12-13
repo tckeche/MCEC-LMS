@@ -5,6 +5,7 @@
 import type { Express, Request, Response } from "express";
 import { storage } from "./storage";
 import crypto from "crypto";
+import { hashPassword, verifyPassword } from "./passwordUtils";
 
 // SECURITY: Only enable dev mode in development environment AND when credentials are missing
 const IS_DEVELOPMENT = process.env.NODE_ENV === "development";
@@ -45,12 +46,19 @@ export function setupDevAuth(app: Express) {
     // Dev mode: Direct staff account creation (bypasses Azure)
     app.post("/api/auth/dev/staff-signup", async (req: Request, res: Response) => {
       try {
-        const { email, firstName, lastName, proposedRole, notes } = req.body;
+        const { email, firstName, lastName, proposedRole, notes, password } = req.body;
         
         // Validate email domain in dev mode (still enforce @melaniacalvin.com)
         if (!email.endsWith("@melaniacalvin.com")) {
           return res.status(400).json({ 
             message: "Staff accounts must use @melaniacalvin.com email domain" 
+          });
+        }
+        
+        // Validate password
+        if (!password || password.length < 8) {
+          return res.status(400).json({ 
+            message: "Password must be at least 8 characters long" 
           });
         }
         
@@ -69,6 +77,9 @@ export function setupDevAuth(app: Express) {
           });
         }
         
+        // Hash password
+        const passwordHash = await hashPassword(password);
+        
         // Create pending staff user
         const userId = crypto.randomUUID();
         await storage.upsertUser({
@@ -79,10 +90,11 @@ export function setupDevAuth(app: Express) {
           profileImageUrl: null,
         });
         
-        // Update user with pending status and auth provider
+        // Update user with pending status, auth provider, and password hash
         await storage.updateUserForStaffSignup(userId, {
           status: "pending",
           authProvider: "microsoft",
+          passwordHash,
           proposedRole,
           role: "student", // Default role until approved
         });
@@ -108,11 +120,28 @@ export function setupDevAuth(app: Express) {
     // Dev mode: Login as staff (for testing approved accounts)
     app.post("/api/auth/dev/staff-login", async (req: Request, res: Response) => {
       try {
-        const { email } = req.body;
+        const { email, password } = req.body;
+        
+        // Validate email domain
+        if (!email.endsWith("@melaniacalvin.com")) {
+          return res.status(400).json({ 
+            message: "Staff accounts must use @melaniacalvin.com email domain" 
+          });
+        }
         
         const user = await storage.getUserByEmail(email);
         if (!user) {
-          return res.status(404).json({ message: "User not found" });
+          return res.status(401).json({ message: "Invalid email or password" });
+        }
+        
+        // Verify password
+        if (!user.passwordHash) {
+          return res.status(401).json({ message: "Invalid email or password" });
+        }
+        
+        const isPasswordValid = await verifyPassword(password, user.passwordHash);
+        if (!isPasswordValid) {
+          return res.status(401).json({ message: "Invalid email or password" });
         }
         
         if (user.status !== "active") {
