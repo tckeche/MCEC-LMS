@@ -252,8 +252,8 @@ export const sessionProposals = pgTable("session_proposals", {
 // Tutoring Sessions (confirmed/scheduled sessions)
 export const tutoringSessions = pgTable("tutoring_sessions", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  proposalId: varchar("proposal_id").references(() => sessionProposals.id),
   studentId: varchar("student_id")
-    .notNull()
     .references(() => users.id, { onDelete: "cascade" }),
   tutorId: varchar("tutor_id")
     .notNull()
@@ -269,9 +269,30 @@ export const tutoringSessions = pgTable("tutoring_sessions", {
   tutorJoinTime: timestamp("tutor_join_time"),
   status: tutoringSessionStatusEnum("status").default("scheduled").notNull(),
   tutorLate: boolean("tutor_late").default(false).notNull(),
-  billableDuration: integer("billable_duration"),
+  scheduledMinutes: integer("scheduled_minutes"),
+  reservedMinutes: integer("reserved_minutes").default(0),
+  billableMinutes: integer("billable_minutes"),
+  isGroupSession: boolean("is_group_session").default(false).notNull(),
   isRecurring: boolean("is_recurring").default(false).notNull(),
   recurrenceGroupId: varchar("recurrence_group_id"),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+// Session Attendance (for group sessions - tracks per-student attendance)
+export const sessionAttendance = pgTable("session_attendance", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  sessionId: varchar("session_id")
+    .notNull()
+    .references(() => tutoringSessions.id, { onDelete: "cascade" }),
+  studentId: varchar("student_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  joinTime: timestamp("join_time"),
+  leaveTime: timestamp("leave_time"),
+  attended: boolean("attended").default(false).notNull(),
+  reservedMinutes: integer("reserved_minutes").default(0),
+  consumedMinutes: integer("consumed_minutes").default(0),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -438,6 +459,17 @@ export const hourWalletsRelations = relations(hourWallets, ({ one }) => ({
   }),
 }));
 
+export const sessionAttendanceRelations = relations(sessionAttendance, ({ one }) => ({
+  session: one(tutoringSessions, {
+    fields: [sessionAttendance.sessionId],
+    references: [tutoringSessions.id],
+  }),
+  student: one(users, {
+    fields: [sessionAttendance.studentId],
+    references: [users.id],
+  }),
+}));
+
 // Insert schemas
 export const insertUserSchema = createInsertSchema(users).omit({
   id: true,
@@ -510,6 +542,11 @@ export const insertHourWalletSchema = createInsertSchema(hourWallets).omit({
   id: true,
   createdAt: true,
   updatedAt: true,
+});
+
+export const insertSessionAttendanceSchema = createInsertSchema(sessionAttendance).omit({
+  id: true,
+  createdAt: true,
 });
 
 // Types
@@ -600,6 +637,9 @@ export type InsertTutoringSession = z.infer<typeof insertTutoringSessionSchema>;
 
 export type HourWallet = typeof hourWallets.$inferSelect;
 export type InsertHourWallet = z.infer<typeof insertHourWalletSchema>;
+
+export type SessionAttendance = typeof sessionAttendance.$inferSelect;
+export type InsertSessionAttendance = z.infer<typeof insertSessionAttendanceSchema>;
 
 export type ProposalStatus = "pending" | "approved" | "rejected";
 export type TutoringSessionStatus = "scheduled" | "in_progress" | "completed" | "missed" | "postponed" | "cancelled";
