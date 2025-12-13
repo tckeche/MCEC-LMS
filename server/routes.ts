@@ -1671,7 +1671,10 @@ export async function registerRoutes(
       }
       
       const isTutor = session.tutorId === userId;
-      const isStudent = session.studentId === userId;
+      // For group sessions, check if student is in attendee list; for 1:1, check studentId
+      const isStudent = session.isGroupSession 
+        ? await storage.getStudentSessionAttendance(session.id, userId) !== undefined
+        : session.studentId === userId;
       
       if (!isTutor && !isStudent) {
         return res.status(403).json({ message: "You are not a participant of this session" });
@@ -1684,16 +1687,65 @@ export async function registerRoutes(
       const now = new Date();
       const updates: any = {};
 
-      if (isStudent) {
-        // Check hour wallet balance before allowing student to join
-        const wallet = await storage.getHourWalletByStudentCourse(userId, session.courseId);
-        const balance = wallet ? wallet.purchasedMinutes - wallet.consumedMinutes : 0;
+      if (isStudent && !isTutor) {
+        // Calculate scheduled minutes if not already set
+        const scheduledMinutes = session.scheduledMinutes || 
+          Math.ceil((new Date(session.scheduledEndTime).getTime() - new Date(session.scheduledStartTime).getTime()) / (1000 * 60));
         
-        if (balance <= 0) {
-          return res.status(402).json({ message: "Insufficient hour balance. Please purchase more hours." });
+        if (session.isGroupSession) {
+          // For group sessions, check if already joined via attendance record
+          const attendance = await storage.getStudentSessionAttendance(session.id, userId);
+          if (!attendance) {
+            return res.status(403).json({ message: "You are not registered for this group session" });
+          }
+          
+          // Idempotency: If already joined (reservedMinutes > 0), skip charging
+          if (attendance.reservedMinutes && attendance.reservedMinutes > 0) {
+            // Already joined and charged - just return current session
+            return res.json(session);
+          }
+          
+          // Check hour wallet balance before allowing student to join
+          const wallet = await storage.getHourWalletByStudentCourse(userId, session.courseId);
+          const balance = wallet ? wallet.purchasedMinutes - wallet.consumedMinutes : 0;
+          
+          if (balance < scheduledMinutes) {
+            return res.status(402).json({ 
+              message: `Insufficient hour balance. You need ${scheduledMinutes} minutes but have ${balance} available.` 
+            });
+          }
+          
+          // RESERVE scheduled minutes from wallet at join time
+          await storage.deductMinutesFromWallet(userId, session.courseId, scheduledMinutes);
+          
+          await storage.updateSessionAttendance(attendance.id, {
+            joinTime: now,
+            attended: true,
+            reservedMinutes: scheduledMinutes,
+          });
+        } else {
+          // For 1:1 sessions - idempotency check
+          if (session.studentJoinTime && session.reservedMinutes && session.reservedMinutes > 0) {
+            // Already joined and charged - just return current session
+            return res.json(session);
+          }
+          
+          // Check hour wallet balance before allowing student to join
+          const wallet = await storage.getHourWalletByStudentCourse(userId, session.courseId);
+          const balance = wallet ? wallet.purchasedMinutes - wallet.consumedMinutes : 0;
+          
+          if (balance < scheduledMinutes) {
+            return res.status(402).json({ 
+              message: `Insufficient hour balance. You need ${scheduledMinutes} minutes but have ${balance} available.` 
+            });
+          }
+          
+          // RESERVE scheduled minutes from wallet at join time (not at end)
+          await storage.deductMinutesFromWallet(userId, session.courseId, scheduledMinutes);
+          
+          updates.studentJoinTime = now;
+          updates.reservedMinutes = scheduledMinutes;
         }
-        
-        updates.studentJoinTime = now;
       }
 
       if (isTutor) {
@@ -1709,10 +1761,19 @@ export async function registerRoutes(
 
       // If both have joined (or first one joining and session is scheduled), start the session
       if (session.status === "scheduled") {
-        const otherJoined = isTutor ? session.studentJoinTime : session.tutorJoinTime;
-        if (otherJoined || (updates.studentJoinTime && updates.tutorJoinTime)) {
-          updates.status = "in_progress";
-          updates.actualStartTime = now;
+        if (session.isGroupSession) {
+          // For group sessions, start when tutor joins
+          if (isTutor) {
+            updates.status = "in_progress";
+            updates.actualStartTime = now;
+          }
+        } else {
+          // For 1:1 sessions, start when both have joined
+          const otherJoined = isTutor ? session.studentJoinTime : session.tutorJoinTime;
+          if (otherJoined || (updates.studentJoinTime && updates.tutorJoinTime)) {
+            updates.status = "in_progress";
+            updates.actualStartTime = now;
+          }
         }
       }
 
@@ -1737,8 +1798,19 @@ export async function registerRoutes(
         return res.status(404).json({ message: "Session not found" });
       }
       
-      if (session.tutorId !== userId && session.studentId !== userId) {
+      // For group sessions, only tutor can end; for 1:1, either participant can end
+      const isTutor = session.tutorId === userId;
+      const isStudent = session.isGroupSession 
+        ? await storage.getStudentSessionAttendance(session.id, userId) !== undefined
+        : session.studentId === userId;
+      
+      if (!isTutor && !isStudent) {
         return res.status(403).json({ message: "You are not a participant of this session" });
+      }
+      
+      // Only tutor can end group sessions
+      if (session.isGroupSession && !isTutor) {
+        return res.status(403).json({ message: "Only the tutor can end a group session" });
       }
       
       if (session.status !== "in_progress") {
@@ -1748,14 +1820,34 @@ export async function registerRoutes(
       const now = new Date();
       const actualStart = session.actualStartTime ? new Date(session.actualStartTime) : now;
       const durationMs = now.getTime() - actualStart.getTime();
-      const durationMinutes = Math.ceil(durationMs / (1000 * 60));
+      const actualDurationMinutes = Math.ceil(durationMs / (1000 * 60));
       
-      // Round up to nearest 15-minute block for billing
-      const billableMinutes = Math.ceil(durationMinutes / 15) * 15;
+      // Calculate scheduled minutes
+      const scheduledMinutes = session.scheduledMinutes || 
+        Math.ceil((new Date(session.scheduledEndTime).getTime() - new Date(session.scheduledStartTime).getTime()) / (1000 * 60));
+      
+      // Billable minutes = min(actual duration, scheduled minutes) - no extra billing beyond scheduled
+      // Minutes were already reserved at join time, so no additional deduction needed
+      const billableMinutes = Math.min(actualDurationMinutes, scheduledMinutes);
 
-      // Deduct from student's wallet
-      await storage.deductMinutesFromWallet(session.studentId, session.courseId, billableMinutes);
+      if (session.isGroupSession) {
+        // For group sessions, update each student's attendance record with leave time
+        const attendees = await storage.getSessionAttendance(session.id);
+        for (const attendee of attendees) {
+          if (attendee.attended && attendee.joinTime && !attendee.leaveTime) {
+            const studentDurationMs = now.getTime() - new Date(attendee.joinTime).getTime();
+            const studentDurationMinutes = Math.ceil(studentDurationMs / (1000 * 60));
+            const consumedMinutes = Math.min(studentDurationMinutes, attendee.reservedMinutes || scheduledMinutes);
+            
+            await storage.updateSessionAttendance(attendee.id, {
+              leaveTime: now,
+              consumedMinutes,
+            });
+          }
+        }
+      }
 
+      // No additional deduction - minutes were reserved at join time
       const updatedSession = await storage.updateTutoringSession(req.params.id, {
         status: "completed",
         actualEndTime: now,
@@ -1782,33 +1874,100 @@ export async function registerRoutes(
         return res.status(404).json({ message: "Session not found" });
       }
       
-      if (session.tutorId !== userId && session.studentId !== userId) {
+      const isTutor = session.tutorId === userId;
+      const isStudent = session.isGroupSession 
+        ? await storage.getStudentSessionAttendance(session.id, userId) !== undefined
+        : session.studentId === userId;
+      
+      if (!isTutor && !isStudent) {
         return res.status(403).json({ message: "You are not a participant of this session" });
+      }
+      
+      // For group sessions, only tutor can postpone
+      if (session.isGroupSession && !isTutor) {
+        return res.status(403).json({ message: "Only the tutor can postpone a group session" });
       }
       
       if (session.status !== "scheduled") {
         return res.status(400).json({ message: "Only scheduled sessions can be postponed" });
       }
 
+      const now = new Date();
+      const scheduledStart = new Date(session.scheduledStartTime);
+      const minutesUntilStart = (scheduledStart.getTime() - now.getTime()) / (1000 * 60);
+      
+      // Calculate scheduled minutes for charging
+      const scheduledMinutes = session.scheduledMinutes || 
+        Math.ceil((new Date(session.scheduledEndTime).getTime() - scheduledStart.getTime()) / (1000 * 60));
+
+      // If less than 120 minutes before start, mark as missed with 50% charge
+      if (minutesUntilStart < 120) {
+        const missedChargeMinutes = Math.ceil(scheduledMinutes * 0.5);
+        
+        if (session.isGroupSession) {
+          // For group sessions, charge each registered student 50%
+          const attendees = await storage.getSessionAttendance(session.id);
+          for (const attendee of attendees) {
+            await storage.deductMinutesFromWallet(attendee.studentId, session.courseId, missedChargeMinutes);
+            await storage.updateSessionAttendance(attendee.id, {
+              attended: false,
+              consumedMinutes: missedChargeMinutes,
+            });
+          }
+        } else if (session.studentId) {
+          // For 1:1 sessions, charge the student 50%
+          await storage.deductMinutesFromWallet(session.studentId, session.courseId, missedChargeMinutes);
+        }
+        
+        const updatedSession = await storage.updateTutoringSession(req.params.id, {
+          status: "missed",
+          billableMinutes: missedChargeMinutes,
+          notes: `Session marked as missed (postponed <120 min before start). 50% charge applied. ${req.body.reason || ""}`.trim(),
+        });
+        
+        // Notify participants
+        const otherUserId = isTutor ? session.studentId : session.tutorId;
+        if (otherUserId) {
+          try {
+            await storage.createNotification({
+              userId: otherUserId,
+              type: "new_announcement" as any,
+              title: "Session Missed",
+              message: `Your tutoring session has been marked as missed (late postponement). A 50% charge was applied.`,
+              link: "/sessions",
+              isRead: false,
+              relatedId: session.id,
+            });
+          } catch (notifError) {
+            console.error("Error creating notification:", notifError);
+          }
+        }
+        
+        return res.json(updatedSession);
+      }
+
+      // Normal postponement (>120 min before start) - no charge
       const updatedSession = await storage.updateTutoringSession(req.params.id, {
         status: "postponed",
         notes: req.body.reason || "Session postponed",
       });
 
       // Notify the other participant
-      const otherUserId = session.tutorId === userId ? session.studentId : session.tutorId;
-      try {
-        await storage.createNotification({
-          userId: otherUserId,
-          type: "session_postponed",
-          title: "Session Postponed",
-          message: `Your tutoring session has been postponed. ${req.body.reason || ""}`.trim(),
-          link: "/sessions",
-          isRead: false,
-          relatedId: session.id,
-        });
-      } catch (notifError) {
-        console.error("Error creating notification:", notifError);
+      const otherUserId = isTutor ? session.studentId : session.tutorId;
+      if (otherUserId) {
+        try {
+          await storage.createNotification({
+            userId: otherUserId,
+            type: "new_announcement" as any,
+            title: "Session Postponed",
+            message: `Your tutoring session has been postponed. ${req.body.reason || ""}`.trim(),
+            link: "/sessions",
+            isRead: false,
+            relatedId: session.id,
+          });
+        } catch (notifError) {
+          console.error("Error creating notification:", notifError);
+        }
       }
 
       res.json(updatedSession);
