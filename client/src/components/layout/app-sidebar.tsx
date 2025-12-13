@@ -66,6 +66,12 @@ const navItems: NavItem[] = [
     roles: ["student"],
   },
   {
+    title: "Session Calendar",
+    url: "/calendar",
+    icon: Calendar,
+    roles: ["student", "tutor"],
+  },
+  {
     title: "Course Management",
     url: "/tutor/courses",
     icon: BookOpen,

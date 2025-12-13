@@ -25,6 +25,7 @@ import TutorGradebook from "@/pages/tutor/gradebook";
 import TutorStudents from "@/pages/tutor/students";
 import TutorAvailability from "@/pages/tutor/availability";
 import TutorProposals from "@/pages/tutor/proposals";
+import CalendarPage from "@/pages/calendar";
 import ManagerDashboard from "@/pages/manager/dashboard";
 import AdminDashboard from "@/pages/admin/dashboard";
 import AdminUsers from "@/pages/admin/users";
@@ -74,6 +75,7 @@ function StudentRoutes() {
       <Route path="/assignments" component={StudentAssignments} />
       <Route path="/grades" component={StudentGrades} />
       <Route path="/scheduling" component={StudentScheduling} />
+      <Route path="/calendar" component={CalendarPage} />
       <Route component={NotFound} />
     </Switch>
   );
@@ -99,6 +101,7 @@ function TutorRoutes() {
       <Route path="/tutor/students" component={TutorStudents} />
       <Route path="/tutor/availability" component={TutorAvailability} />
       <Route path="/tutor/proposals" component={TutorProposals} />
+      <Route path="/calendar" component={CalendarPage} />
       <Route path="/announcements" component={Announcements} />
       <Route component={NotFound} />
     </Switch>
