@@ -240,6 +240,15 @@ export interface IStorage {
   // Wallet Transaction operations
   getWalletTransactions(walletId: string): Promise<WalletTransaction[]>;
   createWalletTransaction(transaction: InsertWalletTransaction): Promise<WalletTransaction>;
+  
+  // Account Standing operations
+  getOverdueInvoicesByParent(parentId: string): Promise<Invoice[]>;
+  getAccountStanding(parentId: string): Promise<{
+    hasOverdueInvoices: boolean;
+    overdueCount: number;
+    totalOverdueAmount: string;
+    oldestOverdueDate: Date | null;
+  }>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -1518,6 +1527,50 @@ export class DatabaseStorage implements IStorage {
   async createWalletTransaction(transaction: InsertWalletTransaction): Promise<WalletTransaction> {
     const [newTransaction] = await db.insert(walletTransactions).values(transaction).returning();
     return newTransaction;
+  }
+
+  // Account Standing operations
+  async getOverdueInvoicesByParent(parentId: string): Promise<Invoice[]> {
+    return db
+      .select()
+      .from(invoices)
+      .where(and(
+        eq(invoices.parentId, parentId),
+        eq(invoices.status, "overdue")
+      ))
+      .orderBy(invoices.dueDate);
+  }
+
+  async getAccountStanding(parentId: string): Promise<{
+    hasOverdueInvoices: boolean;
+    overdueCount: number;
+    totalOverdueAmount: string;
+    oldestOverdueDate: Date | null;
+  }> {
+    const overdueInvoices = await this.getOverdueInvoicesByParent(parentId);
+    
+    if (overdueInvoices.length === 0) {
+      return {
+        hasOverdueInvoices: false,
+        overdueCount: 0,
+        totalOverdueAmount: "0",
+        oldestOverdueDate: null,
+      };
+    }
+    
+    const totalOverdueAmount = overdueInvoices.reduce(
+      (sum, inv) => sum + parseFloat(inv.amountOutstanding),
+      0
+    );
+    
+    const oldestOverdueDate = overdueInvoices[0].dueDate;
+    
+    return {
+      hasOverdueInvoices: true,
+      overdueCount: overdueInvoices.length,
+      totalOverdueAmount: totalOverdueAmount.toFixed(2),
+      oldestOverdueDate,
+    };
   }
 }
 

@@ -2646,5 +2646,334 @@ export async function registerRoutes(
     }
   });
 
+  // ==========================================
+  // INVOICE PAYMENT ROUTES
+  // ==========================================
+
+  // Parent uploads payment proof for an invoice
+  app.post('/api/invoices/:id/payments', isAuthenticated, requireRole("parent"), async (req: Request, res: Response) => {
+    try {
+      const invoiceId = req.params.id;
+      const dbUser = (req as any).dbUser;
+      
+      // Get the invoice and verify ownership
+      const invoice = await storage.getInvoice(invoiceId);
+      if (!invoice) {
+        return res.status(404).json({ message: "Invoice not found" });
+      }
+      
+      // Parents can only upload payments for their own invoices
+      if (invoice.parentId !== dbUser.id) {
+        return res.status(403).json({ message: "You can only upload payments for your own invoices" });
+      }
+      
+      // Validate payment data with proper numeric validation
+      const paymentSchema = z.object({
+        amount: z.string().or(z.number()).transform((val, ctx) => {
+          const num = typeof val === 'number' ? val : parseFloat(val);
+          if (isNaN(num) || num <= 0) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              message: "Amount must be a valid positive number",
+            });
+            return z.NEVER;
+          }
+          // Return as string with 2 decimal places for consistent storage
+          return num.toFixed(2);
+        }),
+        currency: z.enum(["ZAR", "USD", "GBP"]).optional(),
+        paymentMethod: z.string().max(50).optional(),
+        paymentReference: z.string().max(100).optional(),
+        proofAssetUrl: z.string().optional(),
+      });
+      
+      const validated = paymentSchema.parse(req.body);
+      
+      // Create payment record
+      const payment = await storage.createInvoicePayment({
+        invoiceId,
+        amount: validated.amount,
+        currency: validated.currency || invoice.currency,
+        paymentMethod: validated.paymentMethod || null,
+        paymentReference: validated.paymentReference || null,
+        proofAssetUrl: validated.proofAssetUrl || null,
+        verificationStatus: "pending",
+        verifiedById: null,
+        verifiedAt: null,
+        rejectionReason: null,
+      });
+      
+      // Update invoice status to awaiting_payment if it was draft
+      if (invoice.status === "draft") {
+        await storage.updateInvoice(invoiceId, { status: "awaiting_payment" });
+      }
+      
+      res.status(201).json(payment);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Invalid data", errors: error.errors });
+      }
+      console.error("Error uploading payment:", error);
+      res.status(500).json({ message: "Failed to upload payment" });
+    }
+  });
+
+  // Get pending payments for admin review
+  app.get('/api/payments/pending', isAuthenticated, requireRole("admin", "manager"), async (req: Request, res: Response) => {
+    try {
+      const pendingPayments = await storage.getPendingPayments();
+      
+      // Enrich with invoice details
+      const enrichedPayments = await Promise.all(
+        pendingPayments.map(async (payment) => {
+          const invoice = await storage.getInvoiceWithDetails(payment.invoiceId);
+          return {
+            ...payment,
+            invoice,
+          };
+        })
+      );
+      
+      res.json(enrichedPayments);
+    } catch (error) {
+      console.error("Error fetching pending payments:", error);
+      res.status(500).json({ message: "Failed to fetch pending payments" });
+    }
+  });
+
+  // Get a specific payment
+  app.get('/api/payments/:id', isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const payment = await storage.getInvoicePayment(req.params.id);
+      if (!payment) {
+        return res.status(404).json({ message: "Payment not found" });
+      }
+      
+      const userId = req.user?.claims?.sub;
+      const user = await storage.getUser(userId!);
+      
+      // Check access: admin/manager can see all, parent can see their own
+      if (user?.role !== "admin" && user?.role !== "manager") {
+        const invoice = await storage.getInvoice(payment.invoiceId);
+        if (invoice?.parentId !== userId && invoice?.studentId !== userId) {
+          return res.status(403).json({ message: "Access denied" });
+        }
+      }
+      
+      // Enrich with invoice details
+      const invoice = await storage.getInvoiceWithDetails(payment.invoiceId);
+      res.json({ ...payment, invoice });
+    } catch (error) {
+      console.error("Error fetching payment:", error);
+      res.status(500).json({ message: "Failed to fetch payment" });
+    }
+  });
+
+  // Admin verifies a payment
+  app.patch('/api/payments/:id/verify', isAuthenticated, requireRole("admin", "manager"), async (req: Request, res: Response) => {
+    try {
+      const paymentId = req.params.id;
+      const dbUser = (req as any).dbUser;
+      
+      const payment = await storage.getInvoicePayment(paymentId);
+      if (!payment) {
+        return res.status(404).json({ message: "Payment not found" });
+      }
+      
+      if (payment.verificationStatus !== "pending") {
+        return res.status(400).json({ message: "Payment has already been processed" });
+      }
+      
+      // Defensive validation: ensure payment amount is a valid number
+      const paymentAmount = parseFloat(payment.amount);
+      if (isNaN(paymentAmount) || paymentAmount <= 0) {
+        return res.status(400).json({ message: "Payment has invalid amount data and cannot be verified" });
+      }
+      
+      // Update payment verification status
+      const updatedPayment = await storage.updatePaymentVerification(
+        paymentId,
+        "verified",
+        dbUser.id
+      );
+      
+      // Update invoice amounts
+      const invoice = await storage.getInvoice(payment.invoiceId);
+      if (invoice) {
+        const newAmountPaid = parseFloat(invoice.amountPaid) + paymentAmount;
+        const newAmountOutstanding = parseFloat(invoice.totalAmount) - newAmountPaid;
+        
+        // Determine new status
+        let newStatus: InvoiceStatus = invoice.status;
+        if (newAmountOutstanding <= 0) {
+          newStatus = "paid";
+        }
+        
+        await storage.updateInvoice(invoice.id, {
+          amountPaid: String(newAmountPaid),
+          amountOutstanding: String(Math.max(0, newAmountOutstanding)),
+          status: newStatus,
+        });
+        
+        // If invoice is fully paid, credit the student's hour wallet
+        if (newStatus === "paid") {
+          const lineItems = await storage.getInvoiceLineItems(invoice.id);
+          
+          for (const item of lineItems) {
+            if (item.minutesToAdd > 0) {
+              // Get or create wallet for this student-course combo
+              let wallet = await storage.getHourWalletByStudentCourse(invoice.studentId, item.courseId);
+              
+              if (!wallet) {
+                wallet = await storage.createHourWallet({
+                  studentId: invoice.studentId,
+                  courseId: item.courseId,
+                  purchasedMinutes: 0,
+                  consumedMinutes: 0,
+                  status: "active",
+                  expiresAt: null,
+                });
+              }
+              
+              // Add minutes to wallet
+              const updatedWallet = await storage.addMinutesToWallet(
+                invoice.studentId,
+                item.courseId,
+                item.minutesToAdd
+              );
+              
+              // Record wallet transaction for audit
+              if (updatedWallet) {
+                const remainingMinutes = updatedWallet.purchasedMinutes - updatedWallet.consumedMinutes;
+                await storage.createWalletTransaction({
+                  walletId: updatedWallet.id,
+                  invoiceId: invoice.id,
+                  minutesDelta: item.minutesToAdd,
+                  balanceAfter: remainingMinutes,
+                  reason: `Payment verified for invoice ${invoice.invoiceNumber}`,
+                  performedById: dbUser.id,
+                });
+              }
+            }
+          }
+        }
+      }
+      
+      res.json(updatedPayment);
+    } catch (error) {
+      console.error("Error verifying payment:", error);
+      res.status(500).json({ message: "Failed to verify payment" });
+    }
+  });
+
+  // Admin rejects a payment
+  app.patch('/api/payments/:id/reject', isAuthenticated, requireRole("admin", "manager"), async (req: Request, res: Response) => {
+    try {
+      const paymentId = req.params.id;
+      const dbUser = (req as any).dbUser;
+      
+      const payment = await storage.getInvoicePayment(paymentId);
+      if (!payment) {
+        return res.status(404).json({ message: "Payment not found" });
+      }
+      
+      if (payment.verificationStatus !== "pending") {
+        return res.status(400).json({ message: "Payment has already been processed" });
+      }
+      
+      const { reason } = req.body;
+      if (!reason || typeof reason !== "string") {
+        return res.status(400).json({ message: "Rejection reason is required" });
+      }
+      
+      // Update payment verification status with rejection reason
+      const updatedPayment = await storage.updatePaymentVerification(
+        paymentId,
+        "rejected",
+        dbUser.id,
+        reason
+      );
+      
+      res.json(updatedPayment);
+    } catch (error) {
+      console.error("Error rejecting payment:", error);
+      res.status(500).json({ message: "Failed to reject payment" });
+    }
+  });
+
+  // Get payments for an invoice
+  app.get('/api/invoices/:id/payments', isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const invoiceId = req.params.id;
+      const userId = req.user?.claims?.sub;
+      const user = await storage.getUser(userId!);
+      
+      const invoice = await storage.getInvoice(invoiceId);
+      if (!invoice) {
+        return res.status(404).json({ message: "Invoice not found" });
+      }
+      
+      // Check access: admin/manager can see all, parent/student can see their own
+      if (user?.role !== "admin" && user?.role !== "manager") {
+        if (invoice.parentId !== userId && invoice.studentId !== userId) {
+          return res.status(403).json({ message: "Access denied" });
+        }
+      }
+      
+      const payments = await storage.getInvoicePayments(invoiceId);
+      res.json(payments);
+    } catch (error) {
+      console.error("Error fetching invoice payments:", error);
+      res.status(500).json({ message: "Failed to fetch payments" });
+    }
+  });
+
+  // ==========================================
+  // ACCOUNT STANDING ROUTES
+  // ==========================================
+
+  // Get account standing for the current parent
+  app.get('/api/account/standing', isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const userId = req.user?.claims?.sub;
+      if (!userId) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+      
+      const user = await storage.getUser(userId);
+      if (!user) {
+        return res.status(404).json({ message: "User not found" });
+      }
+      
+      // Only parents have account standing (invoices are billed to parents)
+      if (user.role !== "parent") {
+        return res.json({
+          hasOverdueInvoices: false,
+          overdueCount: 0,
+          totalOverdueAmount: "0",
+          oldestOverdueDate: null,
+        });
+      }
+      
+      const standing = await storage.getAccountStanding(userId);
+      res.json(standing);
+    } catch (error) {
+      console.error("Error fetching account standing:", error);
+      res.status(500).json({ message: "Failed to fetch account standing" });
+    }
+  });
+
+  // Get account standing for a specific parent (admin/manager only)
+  app.get('/api/account/standing/:parentId', isAuthenticated, requireRole("admin", "manager"), async (req: Request, res: Response) => {
+    try {
+      const parentId = req.params.parentId;
+      const standing = await storage.getAccountStanding(parentId);
+      res.json(standing);
+    } catch (error) {
+      console.error("Error fetching account standing:", error);
+      res.status(500).json({ message: "Failed to fetch account standing" });
+    }
+  });
+
   return httpServer;
 }
