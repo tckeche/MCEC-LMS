@@ -22,6 +22,7 @@ import {
   type InvoiceStatus,
 } from "@shared/schema";
 import { z } from "zod";
+import PDFDocument from "pdfkit";
 
 // Extend Express.User to include our claims
 declare global {
@@ -2380,6 +2381,268 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Error fetching invoice line items:", error);
       res.status(500).json({ message: "Failed to fetch line items" });
+    }
+  });
+
+  // Generate PDF for invoice
+  app.get('/api/invoices/:id/pdf', isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const userId = req.user?.claims?.sub;
+      if (!userId) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+      
+      const user = await storage.getUser(userId);
+      if (!user) {
+        return res.status(401).json({ message: "User not found" });
+      }
+      
+      // Only admin, manager, parent, or student can download invoices
+      const allowedRoles = ["admin", "manager", "parent", "student"];
+      if (!allowedRoles.includes(user.role)) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+      
+      const invoice = await storage.getInvoiceWithDetails(req.params.id);
+      if (!invoice) {
+        return res.status(404).json({ message: "Invoice not found" });
+      }
+      
+      // Parents can only download their own invoices
+      if (user.role === "parent" && invoice.parentId !== userId) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+      
+      // Students can download invoices for them
+      if (user.role === "student" && invoice.studentId !== userId) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+      
+      const lineItems = await storage.getInvoiceLineItems(req.params.id);
+      
+      // Get parent and student details
+      const parent = await storage.getUser(invoice.parentId);
+      const student = await storage.getUser(invoice.studentId);
+      
+      // Create PDF document
+      const doc = new PDFDocument({ 
+        size: 'A4',
+        margin: 50,
+        info: {
+          Title: `Invoice ${invoice.invoiceNumber}`,
+          Author: 'MCEC LMS',
+        }
+      });
+      
+      // Set response headers
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `attachment; filename="invoice-${invoice.invoiceNumber}.pdf"`);
+      
+      // Pipe to response
+      doc.pipe(res);
+      
+      // Helper functions
+      const formatCurrency = (amount: string | number, currency: string) => {
+        const num = typeof amount === 'string' ? parseFloat(amount) : amount;
+        const symbols: Record<string, string> = { ZAR: 'R', USD: '$', GBP: '£' };
+        return `${symbols[currency] || currency} ${num.toFixed(2)}`;
+      };
+      
+      const formatDate = (date: Date | string | null) => {
+        if (!date) return '-';
+        const d = new Date(date);
+        return d.toLocaleDateString('en-ZA', { 
+          year: 'numeric', 
+          month: 'long', 
+          day: 'numeric' 
+        });
+      };
+      
+      // Document colors
+      const primaryColor = '#2563eb';
+      const grayColor = '#6b7280';
+      const darkColor = '#1f2937';
+      
+      // Header
+      doc.fontSize(24)
+         .fillColor(primaryColor)
+         .text('MCEC', 50, 50)
+         .fontSize(10)
+         .fillColor(grayColor)
+         .text('Learning Management System', 50, 78);
+      
+      // Invoice title
+      doc.fontSize(28)
+         .fillColor(darkColor)
+         .text('INVOICE', 400, 50, { align: 'right' });
+      
+      doc.fontSize(12)
+         .fillColor(grayColor)
+         .text(`#${invoice.invoiceNumber}`, 400, 85, { align: 'right' });
+      
+      // Status badge
+      const statusColors: Record<string, string> = {
+        draft: '#6b7280',
+        awaiting_payment: '#f59e0b',
+        paid: '#10b981',
+        overdue: '#ef4444',
+        disputed: '#ef4444',
+        verified: '#10b981',
+      };
+      
+      doc.fontSize(10)
+         .fillColor(statusColors[invoice.status] || grayColor)
+         .text(invoice.status.toUpperCase().replace('_', ' '), 400, 102, { align: 'right' });
+      
+      // Horizontal line
+      doc.moveTo(50, 130)
+         .lineTo(545, 130)
+         .strokeColor('#e5e7eb')
+         .stroke();
+      
+      // Bill To and Invoice Details section
+      doc.fontSize(10)
+         .fillColor(grayColor)
+         .text('BILL TO', 50, 150);
+      
+      doc.fontSize(12)
+         .fillColor(darkColor)
+         .text(`${parent?.firstName || ''} ${parent?.lastName || ''}`.trim() || 'Parent', 50, 168)
+         .fontSize(10)
+         .fillColor(grayColor)
+         .text(parent?.email || '', 50, 185);
+      
+      doc.fontSize(10)
+         .fillColor(grayColor)
+         .text('STUDENT', 50, 210);
+      
+      doc.fontSize(11)
+         .fillColor(darkColor)
+         .text(`${student?.firstName || ''} ${student?.lastName || ''}`.trim() || 'Student', 50, 225);
+      
+      // Right side - Invoice details
+      doc.fontSize(10)
+         .fillColor(grayColor)
+         .text('Invoice Date:', 350, 150)
+         .text('Due Date:', 350, 168)
+         .text('Billing Period:', 350, 186);
+      
+      doc.fillColor(darkColor)
+         .text(formatDate(invoice.createdAt), 450, 150, { align: 'right' })
+         .text(formatDate(invoice.dueDate), 450, 168, { align: 'right' })
+         .text(`${formatDate(invoice.billingPeriodStart)} - ${formatDate(invoice.billingPeriodEnd)}`, 350, 186, { align: 'right', width: 195 });
+      
+      // Line Items Table
+      const tableTop = 270;
+      const tableHeaders = ['Description', 'Hours', 'Rate', 'Amount'];
+      const colWidths = [240, 60, 80, 80];
+      const colPositions = [50, 290, 350, 430];
+      
+      // Table header background
+      doc.rect(50, tableTop - 5, 495, 25)
+         .fillColor('#f3f4f6')
+         .fill();
+      
+      // Table headers
+      doc.fontSize(10)
+         .fillColor(grayColor);
+      
+      tableHeaders.forEach((header, i) => {
+        const align = i === 0 ? 'left' : 'right';
+        doc.text(header, colPositions[i], tableTop + 3, { 
+          width: colWidths[i], 
+          align: align as any
+        });
+      });
+      
+      // Table rows
+      let yPos = tableTop + 30;
+      doc.fontSize(10).fillColor(darkColor);
+      
+      for (const item of lineItems) {
+        // Get course name
+        const course = await storage.getCourse(item.courseId);
+        const description = item.description || course?.title || 'Course';
+        
+        doc.text(description, colPositions[0], yPos, { width: colWidths[0] });
+        doc.text(parseFloat(item.hours).toFixed(2), colPositions[1], yPos, { width: colWidths[1], align: 'right' });
+        doc.text(formatCurrency(item.hourlyRate, invoice.currency), colPositions[2], yPos, { width: colWidths[2], align: 'right' });
+        doc.text(formatCurrency(item.amount, invoice.currency), colPositions[3], yPos, { width: colWidths[3], align: 'right' });
+        
+        yPos += 25;
+        
+        // Add line separator
+        doc.moveTo(50, yPos - 5)
+           .lineTo(545, yPos - 5)
+           .strokeColor('#e5e7eb')
+           .stroke();
+      }
+      
+      // Totals section
+      const totalsTop = yPos + 20;
+      
+      doc.fontSize(10)
+         .fillColor(grayColor)
+         .text('Subtotal:', 350, totalsTop, { width: 80 })
+         .text('Tax:', 350, totalsTop + 20, { width: 80 });
+      
+      doc.fillColor(darkColor)
+         .text(formatCurrency(invoice.subtotal, invoice.currency), 430, totalsTop, { width: 80, align: 'right' })
+         .text(formatCurrency(invoice.taxAmount, invoice.currency), 430, totalsTop + 20, { width: 80, align: 'right' });
+      
+      // Total line
+      doc.moveTo(350, totalsTop + 40)
+         .lineTo(510, totalsTop + 40)
+         .strokeColor('#e5e7eb')
+         .stroke();
+      
+      doc.fontSize(12)
+         .font('Helvetica-Bold')
+         .fillColor(darkColor)
+         .text('Total:', 350, totalsTop + 50, { width: 80 })
+         .text(formatCurrency(invoice.totalAmount, invoice.currency), 430, totalsTop + 50, { width: 80, align: 'right' });
+      
+      // Amount paid and outstanding
+      if (parseFloat(invoice.amountPaid) > 0) {
+        doc.fontSize(10)
+           .font('Helvetica')
+           .fillColor('#10b981')
+           .text('Amount Paid:', 350, totalsTop + 75, { width: 80 })
+           .text(`-${formatCurrency(invoice.amountPaid, invoice.currency)}`, 430, totalsTop + 75, { width: 80, align: 'right' });
+      }
+      
+      if (parseFloat(invoice.amountOutstanding) > 0) {
+        doc.fontSize(11)
+           .font('Helvetica-Bold')
+           .fillColor(invoice.status === 'overdue' ? '#ef4444' : primaryColor)
+           .text('Amount Due:', 350, totalsTop + 95, { width: 80 })
+           .text(formatCurrency(invoice.amountOutstanding, invoice.currency), 430, totalsTop + 95, { width: 80, align: 'right' });
+      }
+      
+      // Notes section
+      if (invoice.notes) {
+        doc.fontSize(10)
+           .font('Helvetica')
+           .fillColor(grayColor)
+           .text('Notes:', 50, totalsTop + 130)
+           .fillColor(darkColor)
+           .text(invoice.notes, 50, totalsTop + 148, { width: 300 });
+      }
+      
+      // Footer
+      const footerTop = 750;
+      doc.fontSize(9)
+         .font('Helvetica')
+         .fillColor(grayColor)
+         .text('Thank you for your business!', 50, footerTop, { align: 'center', width: 495 })
+         .text('MCEC Learning Management System', 50, footerTop + 15, { align: 'center', width: 495 });
+      
+      // Finalize PDF
+      doc.end();
+      
+    } catch (error) {
+      console.error("Error generating invoice PDF:", error);
+      res.status(500).json({ message: "Failed to generate PDF" });
     }
   });
 
