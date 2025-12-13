@@ -19,6 +19,9 @@ import {
   invoicePayments,
   walletTransactions,
   invoiceSequence,
+  payouts,
+  payoutLines,
+  payoutFlags,
   type User,
   type UpsertUser,
   type Course,
@@ -72,6 +75,15 @@ import {
   type InsertWalletTransaction,
   type InvoiceStatus,
   type PaymentVerificationStatus,
+  type Payout,
+  type InsertPayout,
+  type PayoutWithDetails,
+  type PayoutLine,
+  type InsertPayoutLine,
+  type PayoutLineWithDetails,
+  type PayoutFlag,
+  type InsertPayoutFlag,
+  type PayoutStatus,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, and, desc, count, sql, inArray, or, gte, lte, ne } from "drizzle-orm";
@@ -249,6 +261,27 @@ export interface IStorage {
     totalOverdueAmount: string;
     oldestOverdueDate: Date | null;
   }>;
+  
+  // ==========================================
+  // PAYROLL SYSTEM OPERATIONS
+  // ==========================================
+  
+  // Payout operations
+  getPayout(id: string): Promise<Payout | undefined>;
+  getPayoutWithDetails(id: string): Promise<PayoutWithDetails | undefined>;
+  getPayoutsByTutor(tutorId: string): Promise<PayoutWithDetails[]>;
+  getAllPayouts(status?: PayoutStatus): Promise<PayoutWithDetails[]>;
+  createPayout(payout: InsertPayout): Promise<Payout>;
+  updatePayout(id: string, updates: Partial<InsertPayout>): Promise<Payout | undefined>;
+  
+  // Payout Line operations
+  getPayoutLines(payoutId: string): Promise<PayoutLineWithDetails[]>;
+  createPayoutLine(line: InsertPayoutLine): Promise<PayoutLine>;
+  
+  // Payout Flag operations
+  getPayoutFlags(payoutId: string): Promise<PayoutFlag[]>;
+  createPayoutFlag(flag: InsertPayoutFlag): Promise<PayoutFlag>;
+  updatePayoutFlag(id: string, updates: Partial<InsertPayoutFlag>): Promise<PayoutFlag | undefined>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -1571,6 +1604,163 @@ export class DatabaseStorage implements IStorage {
       totalOverdueAmount: totalOverdueAmount.toFixed(2),
       oldestOverdueDate,
     };
+  }
+
+  // ==========================================
+  // PAYROLL SYSTEM OPERATIONS
+  // ==========================================
+
+  // Payout operations
+  async getPayout(id: string): Promise<Payout | undefined> {
+    const [payout] = await db.select().from(payouts).where(eq(payouts.id, id));
+    return payout;
+  }
+
+  async getPayoutWithDetails(id: string): Promise<PayoutWithDetails | undefined> {
+    const [result] = await db
+      .select()
+      .from(payouts)
+      .innerJoin(users, eq(payouts.tutorId, users.id))
+      .where(eq(payouts.id, id));
+    
+    if (!result) return undefined;
+
+    const lines = await this.getPayoutLines(id);
+    const flags = await this.getPayoutFlags(id);
+    
+    let approvedBy: User | undefined;
+    if (result.payouts.approvedById) {
+      approvedBy = await this.getUser(result.payouts.approvedById);
+    }
+
+    return {
+      ...result.payouts,
+      tutor: result.users,
+      approvedBy,
+      lines,
+      flags,
+    };
+  }
+
+  async getPayoutsByTutor(tutorId: string): Promise<PayoutWithDetails[]> {
+    const results = await db
+      .select()
+      .from(payouts)
+      .innerJoin(users, eq(payouts.tutorId, users.id))
+      .where(eq(payouts.tutorId, tutorId))
+      .orderBy(desc(payouts.periodEnd));
+    
+    const payoutsWithDetails: PayoutWithDetails[] = [];
+    for (const result of results) {
+      const lines = await this.getPayoutLines(result.payouts.id);
+      const flags = await this.getPayoutFlags(result.payouts.id);
+      
+      let approvedBy: User | undefined;
+      if (result.payouts.approvedById) {
+        approvedBy = await this.getUser(result.payouts.approvedById);
+      }
+
+      payoutsWithDetails.push({
+        ...result.payouts,
+        tutor: result.users,
+        approvedBy,
+        lines,
+        flags,
+      });
+    }
+    
+    return payoutsWithDetails;
+  }
+
+  async getAllPayouts(status?: PayoutStatus): Promise<PayoutWithDetails[]> {
+    const results = await db
+      .select()
+      .from(payouts)
+      .innerJoin(users, eq(payouts.tutorId, users.id))
+      .where(status ? eq(payouts.status, status) : undefined)
+      .orderBy(desc(payouts.periodEnd));
+    
+    const payoutsWithDetails: PayoutWithDetails[] = [];
+    for (const result of results) {
+      const lines = await this.getPayoutLines(result.payouts.id);
+      const flags = await this.getPayoutFlags(result.payouts.id);
+      
+      let approvedBy: User | undefined;
+      if (result.payouts.approvedById) {
+        approvedBy = await this.getUser(result.payouts.approvedById);
+      }
+
+      payoutsWithDetails.push({
+        ...result.payouts,
+        tutor: result.users,
+        approvedBy,
+        lines,
+        flags,
+      });
+    }
+    
+    return payoutsWithDetails;
+  }
+
+  async createPayout(payout: InsertPayout): Promise<Payout> {
+    const [newPayout] = await db.insert(payouts).values(payout).returning();
+    return newPayout;
+  }
+
+  async updatePayout(id: string, updates: Partial<InsertPayout>): Promise<Payout | undefined> {
+    const [updated] = await db
+      .update(payouts)
+      .set({ ...updates, updatedAt: new Date() })
+      .where(eq(payouts.id, id))
+      .returning();
+    return updated;
+  }
+
+  // Payout Line operations
+  async getPayoutLines(payoutId: string): Promise<PayoutLineWithDetails[]> {
+    const results = await db
+      .select()
+      .from(payoutLines)
+      .innerJoin(users, eq(payoutLines.studentId, users.id))
+      .innerJoin(courses, eq(payoutLines.courseId, courses.id))
+      .leftJoin(tutoringSessions, eq(payoutLines.sessionId, tutoringSessions.id))
+      .where(eq(payoutLines.payoutId, payoutId))
+      .orderBy(payoutLines.createdAt);
+    
+    return results.map(r => ({
+      ...r.payout_lines,
+      student: r.users,
+      course: r.courses,
+      session: r.tutoring_sessions || undefined,
+    }));
+  }
+
+  async createPayoutLine(line: InsertPayoutLine): Promise<PayoutLine> {
+    const [newLine] = await db.insert(payoutLines).values(line).returning();
+    return newLine;
+  }
+
+  // Payout Flag operations
+  async getPayoutFlags(payoutId: string): Promise<PayoutFlag[]> {
+    return db
+      .select()
+      .from(payoutFlags)
+      .where(eq(payoutFlags.payoutId, payoutId))
+      .orderBy(payoutFlags.createdAt);
+  }
+
+  async createPayoutFlag(flag: InsertPayoutFlag): Promise<PayoutFlag> {
+    const [newFlag] = await db.insert(payoutFlags).values(flag).returning();
+    return newFlag;
+  }
+
+  async updatePayoutFlag(id: string, updates: Partial<InsertPayoutFlag>): Promise<PayoutFlag | undefined> {
+    const [updated] = await db
+      .update(payoutFlags)
+      .set(updates)
+      .where(eq(payoutFlags.id, id))
+      .returning();
+    return updated;
   }
 }
 

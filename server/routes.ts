@@ -16,10 +16,14 @@ import {
   insertHourWalletSchema,
   insertInvoiceSchema,
   insertInvoiceLineItemSchema,
+  insertPayoutSchema,
+  insertPayoutLineSchema,
+  insertPayoutFlagSchema,
   type UserRole,
   type ProposalStatus,
   type TutoringSessionStatus,
   type InvoiceStatus,
+  type PayoutStatus,
 } from "@shared/schema";
 import { z } from "zod";
 import PDFDocument from "pdfkit";
@@ -2972,6 +2976,243 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Error fetching account standing:", error);
       res.status(500).json({ message: "Failed to fetch account standing" });
+    }
+  });
+
+  // ==========================================
+  // PAYROLL ROUTES
+  // ==========================================
+
+  // Get all payouts (admin/manager only)
+  app.get('/api/payouts', isAuthenticated, requireRole("admin", "manager"), async (req: Request, res: Response) => {
+    try {
+      const status = req.query.status as PayoutStatus | undefined;
+      const payouts = await storage.getAllPayouts(status);
+      res.json(payouts);
+    } catch (error) {
+      console.error("Error fetching payouts:", error);
+      res.status(500).json({ message: "Failed to fetch payouts" });
+    }
+  });
+
+  // Get tutor's own payouts
+  app.get('/api/tutor/payouts', isAuthenticated, requireRole("tutor"), async (req: Request, res: Response) => {
+    try {
+      const userId = req.user?.claims?.sub;
+      if (!userId) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+      const payouts = await storage.getPayoutsByTutor(userId);
+      res.json(payouts);
+    } catch (error) {
+      console.error("Error fetching tutor payouts:", error);
+      res.status(500).json({ message: "Failed to fetch payouts" });
+    }
+  });
+
+  // Get payout details
+  app.get('/api/payouts/:id', isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const payoutId = req.params.id;
+      const userId = req.user?.claims?.sub;
+      const user = await storage.getUser(userId!);
+      
+      const payout = await storage.getPayoutWithDetails(payoutId);
+      if (!payout) {
+        return res.status(404).json({ message: "Payout not found" });
+      }
+      
+      // Check access: admin/manager can see all, tutor can see their own
+      if (user?.role !== "admin" && user?.role !== "manager") {
+        if (payout.tutorId !== userId) {
+          return res.status(403).json({ message: "Access denied" });
+        }
+      }
+      
+      res.json(payout);
+    } catch (error) {
+      console.error("Error fetching payout:", error);
+      res.status(500).json({ message: "Failed to fetch payout" });
+    }
+  });
+
+  // Create payout (admin/manager only)
+  app.post('/api/payouts', isAuthenticated, requireRole("admin", "manager"), async (req: Request, res: Response) => {
+    try {
+      const result = insertPayoutSchema.safeParse(req.body);
+      if (!result.success) {
+        return res.status(400).json({ message: "Invalid payout data", errors: result.error.errors });
+      }
+      
+      const payout = await storage.createPayout(result.data);
+      res.status(201).json(payout);
+    } catch (error) {
+      console.error("Error creating payout:", error);
+      res.status(500).json({ message: "Failed to create payout" });
+    }
+  });
+
+  // Update payout (admin/manager only) - restricted fields and status transitions
+  const updatePayoutSchema = z.object({
+    status: z.enum(["draft", "approved", "paid", "on_hold"]).optional(),
+    notes: z.string().optional(),
+  });
+  
+  app.patch('/api/payouts/:id', isAuthenticated, requireRole("admin", "manager"), async (req: Request, res: Response) => {
+    try {
+      const payoutId = req.params.id;
+      const dbUser = (req as any).dbUser;
+      
+      const payout = await storage.getPayout(payoutId);
+      if (!payout) {
+        return res.status(404).json({ message: "Payout not found" });
+      }
+      
+      // Validate only allowed fields
+      const result = updatePayoutSchema.safeParse(req.body);
+      if (!result.success) {
+        return res.status(400).json({ message: "Invalid update data", errors: result.error.errors });
+      }
+      
+      const safeUpdates: any = { ...result.data };
+      
+      // Enforce status transition rules
+      if (safeUpdates.status) {
+        const currentStatus = payout.status;
+        const newStatus = safeUpdates.status;
+        
+        // Valid transitions: draft -> approved, approved -> paid, any -> on_hold, on_hold -> approved
+        const validTransitions: Record<string, string[]> = {
+          draft: ["approved", "on_hold"],
+          approved: ["paid", "on_hold"],
+          paid: [],
+          on_hold: ["approved", "draft"],
+        };
+        
+        if (!validTransitions[currentStatus]?.includes(newStatus)) {
+          return res.status(400).json({ 
+            message: `Invalid status transition from '${currentStatus}' to '${newStatus}'` 
+          });
+        }
+        
+        // Set approval metadata when transitioning to approved
+        if (newStatus === "approved" && currentStatus !== "approved") {
+          safeUpdates.approvedById = dbUser.id;
+          safeUpdates.approvedAt = new Date();
+        }
+        
+        // Set paid timestamp when transitioning to paid
+        if (newStatus === "paid" && currentStatus !== "paid") {
+          safeUpdates.paidAt = new Date();
+        }
+      }
+      
+      const updatedPayout = await storage.updatePayout(payoutId, safeUpdates);
+      res.json(updatedPayout);
+    } catch (error) {
+      console.error("Error updating payout:", error);
+      res.status(500).json({ message: "Failed to update payout" });
+    }
+  });
+
+  // Add line to payout (admin/manager only)
+  app.post('/api/payouts/:id/lines', isAuthenticated, requireRole("admin", "manager"), async (req: Request, res: Response) => {
+    try {
+      const payoutId = req.params.id;
+      
+      const payout = await storage.getPayout(payoutId);
+      if (!payout) {
+        return res.status(404).json({ message: "Payout not found" });
+      }
+      
+      const lineData = { ...req.body, payoutId };
+      const result = insertPayoutLineSchema.safeParse(lineData);
+      if (!result.success) {
+        return res.status(400).json({ message: "Invalid line data", errors: result.error.errors });
+      }
+      
+      const line = await storage.createPayoutLine(result.data);
+      res.status(201).json(line);
+    } catch (error) {
+      console.error("Error adding payout line:", error);
+      res.status(500).json({ message: "Failed to add payout line" });
+    }
+  });
+
+  // Get payout lines
+  app.get('/api/payouts/:id/lines', isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const payoutId = req.params.id;
+      const userId = req.user?.claims?.sub;
+      const user = await storage.getUser(userId!);
+      
+      const payout = await storage.getPayout(payoutId);
+      if (!payout) {
+        return res.status(404).json({ message: "Payout not found" });
+      }
+      
+      // Check access
+      if (user?.role !== "admin" && user?.role !== "manager") {
+        if (payout.tutorId !== userId) {
+          return res.status(403).json({ message: "Access denied" });
+        }
+      }
+      
+      const lines = await storage.getPayoutLines(payoutId);
+      res.json(lines);
+    } catch (error) {
+      console.error("Error fetching payout lines:", error);
+      res.status(500).json({ message: "Failed to fetch payout lines" });
+    }
+  });
+
+  // Create payout flag (admin/manager only)
+  app.post('/api/payouts/:id/flags', isAuthenticated, requireRole("admin", "manager"), async (req: Request, res: Response) => {
+    try {
+      const payoutId = req.params.id;
+      
+      const payout = await storage.getPayout(payoutId);
+      if (!payout) {
+        return res.status(404).json({ message: "Payout not found" });
+      }
+      
+      const flagData = { ...req.body, payoutId };
+      const result = insertPayoutFlagSchema.safeParse(flagData);
+      if (!result.success) {
+        return res.status(400).json({ message: "Invalid flag data", errors: result.error.errors });
+      }
+      
+      const flag = await storage.createPayoutFlag(result.data);
+      res.status(201).json(flag);
+    } catch (error) {
+      console.error("Error creating payout flag:", error);
+      res.status(500).json({ message: "Failed to create payout flag" });
+    }
+  });
+
+  // Update payout flag (resolve) (admin/manager only)
+  app.patch('/api/payouts/:payoutId/flags/:flagId', isAuthenticated, requireRole("admin", "manager"), async (req: Request, res: Response) => {
+    try {
+      const { flagId } = req.params;
+      const dbUser = (req as any).dbUser;
+      
+      const updates = req.body;
+      
+      // If resolving, set resolvedById and resolvedAt
+      if (updates.isResolved === true) {
+        updates.resolvedById = dbUser.id;
+        updates.resolvedAt = new Date();
+      }
+      
+      const updatedFlag = await storage.updatePayoutFlag(flagId, updates);
+      if (!updatedFlag) {
+        return res.status(404).json({ message: "Flag not found" });
+      }
+      
+      res.json(updatedFlag);
+    } catch (error) {
+      console.error("Error updating payout flag:", error);
+      res.status(500).json({ message: "Failed to update payout flag" });
     }
   });
 
