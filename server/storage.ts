@@ -308,6 +308,12 @@ export interface IStorage {
   
   // User account status operations
   updateUserAccountStatus(id: string, status: UserStatus): Promise<User | undefined>;
+  
+  // User lookup operations for auth
+  getUserByEmail(email: string): Promise<User | undefined>;
+  getUserByPhone(phoneNumber: string): Promise<User | undefined>;
+  updateUserForStaffSignup(id: string, data: { status: UserStatus; authProvider: string; proposedRole: UserRole; role: UserRole }): Promise<User | undefined>;
+  updateUserForPhoneSignup(id: string, data: { phoneNumber: string; role: UserRole; authProvider: string; status: UserStatus }): Promise<User | undefined>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -1928,6 +1934,39 @@ export class DatabaseStorage implements IStorage {
       .set({ status, updatedAt: new Date() })
       .where(eq(users.id, id))
       .returning();
+    return user;
+  }
+
+  // User lookup operations for auth
+  async getUserByEmail(email: string): Promise<User | undefined> {
+    const [user] = await db.select().from(users).where(eq(users.email, email)).limit(1);
+    return user;
+  }
+
+  async getUserByPhone(phoneNumber: string): Promise<User | undefined> {
+    const [user] = await db.select().from(users).where(eq(users.phoneNumber, phoneNumber)).limit(1);
+    return user;
+  }
+
+  async updateUserForStaffSignup(id: string, data: { status: UserStatus; authProvider: string; proposedRole: UserRole; role: UserRole }): Promise<User | undefined> {
+    const [user] = await db.update(users).set({
+      status: data.status,
+      authProvider: data.authProvider as any,
+      proposedRole: data.proposedRole,
+      role: data.role,
+      updatedAt: new Date(),
+    }).where(eq(users.id, id)).returning();
+    return user;
+  }
+
+  async updateUserForPhoneSignup(id: string, data: { phoneNumber: string; role: UserRole; authProvider: string; status: UserStatus }): Promise<User | undefined> {
+    const [user] = await db.update(users).set({
+      phoneNumber: data.phoneNumber,
+      role: data.role,
+      authProvider: data.authProvider as any,
+      status: data.status,
+      updatedAt: new Date(),
+    }).where(eq(users.id, id)).returning();
     return user;
   }
 }

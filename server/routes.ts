@@ -3,6 +3,7 @@ import type { Express, Request, Response, NextFunction } from "express";
 import type { Server } from "http";
 import { storage } from "./storage";
 import { setupAuth, isAuthenticated } from "./replitAuth";
+import { setupDevAuth } from "./devAuth";
 import {
   insertCourseSchema,
   insertEnrollmentSchema,
@@ -113,6 +114,9 @@ export async function registerRoutes(
 ): Promise<Server> {
   // Setup Replit Auth
   await setupAuth(app);
+  
+  // Setup Development Auth (Microsoft SSO & Phone OTP bypasses)
+  setupDevAuth(app);
 
   // ==========================================
   // AUTH ROUTES

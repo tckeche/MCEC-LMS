@@ -1,10 +1,11 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ArrowLeft, Briefcase, CheckCircle } from "lucide-react";
+import { ArrowLeft, Briefcase, CheckCircle, AlertCircle } from "lucide-react";
 import { Link } from "wouter";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { useAuth } from "@/hooks/useAuth";
@@ -19,6 +20,25 @@ export default function StaffProposal() {
   const [proposedRole, setProposedRole] = useState<string>("");
   const [notes, setNotes] = useState("");
   const [submitted, setSubmitted] = useState(false);
+  
+  const [isMicrosoftDevMode, setIsMicrosoftDevMode] = useState(false);
+  const [devEmail, setDevEmail] = useState("");
+  const [devFirstName, setDevFirstName] = useState("");
+  const [devLastName, setDevLastName] = useState("");
+  const [devProposedRole, setDevProposedRole] = useState<string>("");
+  const [devNotes, setDevNotes] = useState("");
+  const [devSubmitting, setDevSubmitting] = useState(false);
+  const [devSubmitted, setDevSubmitted] = useState(false);
+  const [devError, setDevError] = useState("");
+
+  useEffect(() => {
+    fetch("/api/auth/dev-status")
+      .then(res => res.json())
+      .then(data => {
+        setIsMicrosoftDevMode(data.microsoftDevMode);
+      })
+      .catch(() => {});
+  }, []);
 
   const submitProposalMutation = useMutation({
     mutationFn: async (data: { proposedRole: string; notes: string }) => {
@@ -51,6 +71,61 @@ export default function StaffProposal() {
     submitProposalMutation.mutate({ proposedRole, notes });
   };
 
+  const handleDevSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setDevSubmitting(true);
+    setDevError("");
+    
+    if (!devEmail.endsWith("@melaniacalvin.com")) {
+      setDevError("Staff accounts must use @melaniacalvin.com email domain");
+      setDevSubmitting(false);
+      return;
+    }
+    
+    if (!devProposedRole) {
+      setDevError("Please select a role");
+      setDevSubmitting(false);
+      return;
+    }
+    
+    try {
+      const response = await fetch("/api/auth/dev/staff-signup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: devEmail,
+          firstName: devFirstName,
+          lastName: devLastName,
+          proposedRole: devProposedRole,
+          notes: devNotes,
+        }),
+      });
+      
+      const data = await response.json();
+      
+      if (!response.ok) {
+        throw new Error(data.message || "Failed to create staff account");
+      }
+      
+      toast({
+        title: "Success",
+        description: "Your staff account has been created and is pending approval.",
+      });
+      
+      setDevSubmitted(true);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to create staff account";
+      setDevError(message);
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: message,
+      });
+    } finally {
+      setDevSubmitting(false);
+    }
+  };
+
   if (isLoading) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
@@ -59,7 +134,183 @@ export default function StaffProposal() {
     );
   }
 
+  if (devSubmitted) {
+    return (
+      <div className="min-h-screen bg-background flex flex-col">
+        <header className="sticky top-0 z-50 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+          <div className="mx-auto flex h-20 max-w-7xl items-center justify-between px-4 md:px-8">
+            <div className="flex items-center gap-3">
+              <img src={mcecLogo} alt="MCEC Logo" className="h-20 object-contain" data-testid="img-logo" />
+            </div>
+            <ThemeToggle />
+          </div>
+        </header>
+
+        <main className="flex-1 flex items-center justify-center p-4">
+          <Card className="w-full max-w-md">
+            <CardHeader className="text-center">
+              <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-primary/10 text-primary">
+                <CheckCircle className="h-8 w-8" />
+              </div>
+              <CardTitle className="text-2xl" data-testid="text-dev-submitted-title">
+                Account Created
+              </CardTitle>
+              <CardDescription data-testid="text-dev-submitted-description">
+                Your staff account has been created and is pending approval by an administrator.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="text-center">
+              <p className="text-sm text-muted-foreground mb-6">
+                You will be able to log in once your request has been approved. This typically takes 1-2 business days.
+              </p>
+              <Button variant="outline" asChild data-testid="button-back-home">
+                <Link href="/">
+                  <ArrowLeft className="mr-2 h-4 w-4" />
+                  Back to Home
+                </Link>
+              </Button>
+            </CardContent>
+          </Card>
+        </main>
+      </div>
+    );
+  }
+
   if (!user) {
+    if (isMicrosoftDevMode) {
+      return (
+        <div className="min-h-screen bg-background flex flex-col">
+          <header className="sticky top-0 z-50 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+            <div className="mx-auto flex h-20 max-w-7xl items-center justify-between px-4 md:px-8">
+              <div className="flex items-center gap-3">
+                <img src={mcecLogo} alt="MCEC Logo" className="h-20 object-contain" data-testid="img-logo" />
+              </div>
+              <ThemeToggle />
+            </div>
+          </header>
+
+          <main className="flex-1 flex items-center justify-center p-4">
+            <Card className="w-full max-w-md">
+              <CardHeader>
+                <div className="flex items-center gap-3 mb-2">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-md bg-primary/10 text-primary">
+                    <Briefcase className="h-5 w-5" />
+                  </div>
+                  <CardTitle className="text-xl" data-testid="text-dev-signup-title">
+                    Staff Sign Up
+                  </CardTitle>
+                </div>
+                <CardDescription data-testid="text-dev-signup-description">
+                  Create your staff account (Development Mode - Microsoft SSO bypassed)
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="mb-4 p-3 rounded-md bg-amber-100 dark:bg-amber-900/30 border border-amber-200 dark:border-amber-800">
+                  <p className="text-xs text-amber-700 dark:text-amber-300">
+                    Development Mode: Microsoft SSO is bypassed. Enter your staff email directly.
+                  </p>
+                </div>
+                
+                {devError && (
+                  <div className="mb-4 p-3 rounded-md bg-destructive/10 border border-destructive/20">
+                    <div className="flex items-center gap-2 text-destructive">
+                      <AlertCircle className="h-4 w-4" />
+                      <p className="text-sm" data-testid="text-dev-error">{devError}</p>
+                    </div>
+                  </div>
+                )}
+                
+                <form onSubmit={handleDevSubmit} className="space-y-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="devEmail">Email</Label>
+                    <Input
+                      id="devEmail"
+                      type="email"
+                      placeholder="yourname@melaniacalvin.com"
+                      value={devEmail}
+                      onChange={(e) => setDevEmail(e.target.value)}
+                      required
+                      data-testid="input-dev-email"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Must be a @melaniacalvin.com email address
+                    </p>
+                  </div>
+                  
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="devFirstName">First Name</Label>
+                      <Input
+                        id="devFirstName"
+                        placeholder="John"
+                        value={devFirstName}
+                        onChange={(e) => setDevFirstName(e.target.value)}
+                        required
+                        data-testid="input-dev-first-name"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="devLastName">Last Name</Label>
+                      <Input
+                        id="devLastName"
+                        placeholder="Doe"
+                        value={devLastName}
+                        onChange={(e) => setDevLastName(e.target.value)}
+                        required
+                        data-testid="input-dev-last-name"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="devRole">Requested Role</Label>
+                    <Select value={devProposedRole} onValueChange={setDevProposedRole}>
+                      <SelectTrigger id="devRole" data-testid="select-dev-role">
+                        <SelectValue placeholder="Select a role" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="tutor" data-testid="option-dev-tutor">Tutor</SelectItem>
+                        <SelectItem value="manager" data-testid="option-dev-manager">Manager</SelectItem>
+                        <SelectItem value="admin" data-testid="option-dev-admin">Administrator</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="devNotes">Additional Notes (Optional)</Label>
+                    <Textarea
+                      id="devNotes"
+                      placeholder="Tell us about your experience, qualifications, or why you're interested in this role..."
+                      value={devNotes}
+                      onChange={(e) => setDevNotes(e.target.value)}
+                      className="min-h-[100px]"
+                      data-testid="textarea-dev-notes"
+                    />
+                  </div>
+
+                  <div className="flex flex-col gap-3 pt-4">
+                    <Button 
+                      type="submit" 
+                      disabled={devSubmitting || !devProposedRole}
+                      data-testid="button-dev-submit"
+                    >
+                      {devSubmitting ? "Creating Account..." : "Create Staff Account"}
+                    </Button>
+                    <Button variant="ghost" asChild data-testid="button-back">
+                      <Link href="/">
+                        <ArrowLeft className="mr-2 h-4 w-4" />
+                        Back to Home
+                      </Link>
+                    </Button>
+                  </div>
+                </form>
+              </CardContent>
+            </Card>
+          </main>
+        </div>
+      );
+    }
+    
     return (
       <div className="min-h-screen bg-background flex flex-col">
         <header className="sticky top-0 z-50 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
