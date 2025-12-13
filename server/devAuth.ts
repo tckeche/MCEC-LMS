@@ -139,16 +139,17 @@ export function setupDevAuth(app: Express) {
       try {
         const { email, password } = req.body;
         
-        // Validate email domain
-        if (!email.endsWith("@melaniacalvin.com")) {
-          return res.status(400).json({ 
-            message: "Staff accounts must use @melaniacalvin.com email domain" 
-          });
-        }
-        
+        // 1. Lookup user first
         const user = await storage.getUserByEmail(email);
         if (!user) {
           return res.status(401).json({ message: "Invalid email or password" });
+        }
+        
+        // 2. Domain check: Super Admins bypass, others need @melaniacalvin.com
+        if (!user.isSuperAdmin && !email.endsWith("@melaniacalvin.com")) {
+          return res.status(403).json({ 
+            message: "Staff accounts must use @melaniacalvin.com email domain" 
+          });
         }
         
         // Verify password

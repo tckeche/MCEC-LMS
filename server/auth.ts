@@ -159,13 +159,20 @@ export async function setupAuth(app: Express) {
         return res.status(400).json({ message: "Email and password required" });
       }
 
+      // 1. Lookup user first
       const user = await storage.getUserByEmail(email);
       if (!user) {
         return res.status(401).json({ message: "Invalid email or password" });
       }
 
+      // 2. Domain check: Super Admins bypass, others need @melaniacalvin.com
+      if (!user.isSuperAdmin && !email.endsWith("@melaniacalvin.com")) {
+        return res.status(403).json({ message: "Staff accounts must use @melaniacalvin.com email domain" });
+      }
+
+      // 3. Role check (Super Admins can also bypass this)
       const staffRoles = ["tutor", "manager", "admin"];
-      if (!staffRoles.includes(user.role)) {
+      if (!user.isSuperAdmin && !staffRoles.includes(user.role)) {
         return res.status(403).json({ message: "Not a staff account" });
       }
 
