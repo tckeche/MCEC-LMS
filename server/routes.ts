@@ -1603,6 +1603,34 @@ export async function registerRoutes(
   // TUTORING SESSION ROUTES
   // ==========================================
 
+  // Get sessions for parent's child
+  app.get('/api/parent/children/:childId/sessions', isAuthenticated, requireRole("parent"), async (req: Request, res: Response) => {
+    try {
+      const parentId = req.user?.claims?.sub;
+      if (!parentId) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+      
+      const childId = req.params.childId;
+      
+      // Verify parent-child relationship
+      const parentChildren = await storage.getParentChildren(parentId);
+      const isParentOfChild = parentChildren.some(pc => pc.childId === childId);
+      
+      if (!isParentOfChild) {
+        return res.status(403).json({ message: "Access denied - not your child" });
+      }
+      
+      const status = req.query.status as TutoringSessionStatus | undefined;
+      const sessions = await storage.getTutoringSessionsByStudent(childId, status);
+      
+      res.json(sessions);
+    } catch (error) {
+      console.error("Error fetching child sessions:", error);
+      res.status(500).json({ message: "Failed to fetch sessions" });
+    }
+  });
+
   // Get sessions for current user (filtered by role)
   app.get('/api/tutoring-sessions', isAuthenticated, async (req: Request, res: Response) => {
     try {

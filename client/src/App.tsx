@@ -19,6 +19,8 @@ import StudentAssignments from "@/pages/student/assignments";
 import StudentGrades from "@/pages/student/grades";
 import StudentScheduling from "@/pages/student/scheduling";
 import ParentDashboard from "@/pages/parent/dashboard";
+import ParentInvoices from "@/pages/parent/invoices";
+import ParentAttendance from "@/pages/parent/attendance";
 import TutorDashboard from "@/pages/tutor/dashboard";
 import TutorCourses from "@/pages/tutor/courses";
 import TutorGradebook from "@/pages/tutor/gradebook";
@@ -89,6 +91,8 @@ function ParentRoutes() {
       <Route path="/" component={ParentDashboard} />
       <Route path="/courses" component={StudentCourses} />
       <Route path="/grades" component={StudentGrades} />
+      <Route path="/invoices" component={ParentInvoices} />
+      <Route path="/attendance" component={ParentAttendance} />
       <Route component={NotFound} />
     </Switch>
   );
