@@ -41,6 +41,7 @@ import AdminDashboard from "@/pages/admin/dashboard";
 import AdminUsers from "@/pages/admin/users";
 import AdminInvoices from "@/pages/admin/invoices";
 import AdminPayroll from "@/pages/admin/payroll";
+import AdminStaffApproval from "@/pages/admin/staff-approval";
 import Announcements from "@/pages/announcements";
 
 function LoadingScreen() {
@@ -195,6 +196,7 @@ function AdminRoutes() {
       <Route path="/admin/users" component={AdminUsers} />
       <Route path="/admin/invoices" component={AdminInvoices} />
       <Route path="/admin/payroll" component={AdminPayroll} />
+      <Route path="/admin/staff-approval" component={AdminStaffApproval} />
       <Route path="/announcements" component={Announcements} />
       <Route component={NotFound} />
     </Switch>
