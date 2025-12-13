@@ -34,7 +34,7 @@ import type { CourseWithEnrollmentCount } from "@shared/schema";
 import { Link } from "wouter";
 import { Badge } from "@/components/ui/badge";
 
-const createCourseSchema = insertCourseSchema.extend({
+const createCourseSchema = insertCourseSchema.omit({ tutorId: true }).extend({
   title: z.string().min(3, "Title must be at least 3 characters"),
   description: z.string().min(10, "Description must be at least 10 characters"),
 });
