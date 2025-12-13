@@ -435,6 +435,69 @@ export const walletTransactions = pgTable("wallet_transactions", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
+// ==========================================
+// PAYROLL SYSTEM TABLES
+// ==========================================
+
+// Payouts (monthly payslips for tutors)
+export const payouts = pgTable("payouts", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  tutorId: varchar("tutor_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  periodStart: timestamp("period_start").notNull(),
+  periodEnd: timestamp("period_end").notNull(),
+  currency: currencyCodeEnum("currency").default("ZAR").notNull(),
+  totalMinutes: integer("total_minutes").default(0).notNull(),
+  grossAmount: decimal("gross_amount", { precision: 10, scale: 2 }).default("0").notNull(),
+  deductions: decimal("deductions", { precision: 10, scale: 2 }).default("0").notNull(),
+  netAmount: decimal("net_amount", { precision: 10, scale: 2 }).default("0").notNull(),
+  status: payoutStatusEnum("status").default("draft").notNull(),
+  pdfUrl: varchar("pdf_url"),
+  approvedById: varchar("approved_by_id").references(() => users.id),
+  approvedAt: timestamp("approved_at"),
+  paidAt: timestamp("paid_at"),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Payout Line Items (breakdown per student and course)
+export const payoutLines = pgTable("payout_lines", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  payoutId: varchar("payout_id")
+    .notNull()
+    .references(() => payouts.id, { onDelete: "cascade" }),
+  studentId: varchar("student_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  courseId: varchar("course_id")
+    .notNull()
+    .references(() => courses.id, { onDelete: "cascade" }),
+  sessionId: varchar("session_id").references(() => tutoringSessions.id),
+  minutes: integer("minutes").notNull(),
+  hourlyRate: decimal("hourly_rate", { precision: 10, scale: 2 }).notNull(),
+  amount: decimal("amount", { precision: 10, scale: 2 }).notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+// Payout Flags (warnings when tutor paid for unpaid parent invoices)
+export const payoutFlags = pgTable("payout_flags", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  payoutId: varchar("payout_id")
+    .notNull()
+    .references(() => payouts.id, { onDelete: "cascade" }),
+  invoiceId: varchar("invoice_id")
+    .notNull()
+    .references(() => invoices.id, { onDelete: "cascade" }),
+  flagType: varchar("flag_type", { length: 50 }).notNull(),
+  description: text("description").notNull(),
+  isResolved: boolean("is_resolved").default(false).notNull(),
+  resolvedById: varchar("resolved_by_id").references(() => users.id),
+  resolvedAt: timestamp("resolved_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
 // Relations
 export const usersRelations = relations(users, ({ many }) => ({
   courses: many(courses),
@@ -643,6 +706,56 @@ export const walletTransactionsRelations = relations(walletTransactions, ({ one 
   }),
   performedBy: one(users, {
     fields: [walletTransactions.performedById],
+    references: [users.id],
+  }),
+}));
+
+// Payroll system relations
+export const payoutsRelations = relations(payouts, ({ one, many }) => ({
+  tutor: one(users, {
+    fields: [payouts.tutorId],
+    references: [users.id],
+    relationName: "payoutTutor",
+  }),
+  approvedBy: one(users, {
+    fields: [payouts.approvedById],
+    references: [users.id],
+    relationName: "payoutApprover",
+  }),
+  lines: many(payoutLines),
+  flags: many(payoutFlags),
+}));
+
+export const payoutLinesRelations = relations(payoutLines, ({ one }) => ({
+  payout: one(payouts, {
+    fields: [payoutLines.payoutId],
+    references: [payouts.id],
+  }),
+  student: one(users, {
+    fields: [payoutLines.studentId],
+    references: [users.id],
+  }),
+  course: one(courses, {
+    fields: [payoutLines.courseId],
+    references: [courses.id],
+  }),
+  session: one(tutoringSessions, {
+    fields: [payoutLines.sessionId],
+    references: [tutoringSessions.id],
+  }),
+}));
+
+export const payoutFlagsRelations = relations(payoutFlags, ({ one }) => ({
+  payout: one(payouts, {
+    fields: [payoutFlags.payoutId],
+    references: [payouts.id],
+  }),
+  invoice: one(invoices, {
+    fields: [payoutFlags.invoiceId],
+    references: [invoices.id],
+  }),
+  resolvedBy: one(users, {
+    fields: [payoutFlags.resolvedById],
     references: [users.id],
   }),
 }));
@@ -896,4 +1009,45 @@ export type InvoiceLineItemWithCourse = InvoiceLineItem & {
 export type InvoicePaymentWithDetails = InvoicePayment & {
   invoice: Invoice;
   verifiedBy?: User;
+};
+
+// Payroll system insert schemas
+export const insertPayoutSchema = createInsertSchema(payouts).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const insertPayoutLineSchema = createInsertSchema(payoutLines).omit({
+  id: true,
+  createdAt: true,
+});
+
+export const insertPayoutFlagSchema = createInsertSchema(payoutFlags).omit({
+  id: true,
+  createdAt: true,
+});
+
+// Payroll system types
+export type Payout = typeof payouts.$inferSelect;
+export type InsertPayout = z.infer<typeof insertPayoutSchema>;
+
+export type PayoutLine = typeof payoutLines.$inferSelect;
+export type InsertPayoutLine = z.infer<typeof insertPayoutLineSchema>;
+
+export type PayoutFlag = typeof payoutFlags.$inferSelect;
+export type InsertPayoutFlag = z.infer<typeof insertPayoutFlagSchema>;
+
+// Extended types for payroll
+export type PayoutWithDetails = Payout & {
+  tutor: User;
+  approvedBy?: User;
+  lines: (PayoutLine & { student: User; course: Course })[];
+  flags: PayoutFlag[];
+};
+
+export type PayoutLineWithDetails = PayoutLine & {
+  student: User;
+  course: Course;
+  session?: TutoringSession;
 };
