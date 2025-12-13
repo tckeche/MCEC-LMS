@@ -1,8 +1,17 @@
 # MCEC LMS Design Guidelines
 
+## Brand Identity
+
+**Organization**: MELANIA CALVIN Educational Consultants (MCEC)
+**Logo**: Blue circular design with stacked books and green accents
+**Primary Colors**: 
+- Primary Blue: #1E40AF (brand color)
+- Accent Green: #BBEF63 (from logo book pages)
+**Tagline**: Empowering educational excellence
+
 ## Design Approach
 
-**System-Based Approach**: Drawing from modern productivity and educational platforms (Linear, Notion, Google Classroom), emphasizing clarity, information hierarchy, and efficient workflows. This LMS prioritizes usability and data comprehension over decorative elements.
+**System-Based Approach**: Drawing from modern productivity and educational platforms (Linear, Notion, Google Classroom), emphasizing clarity, information hierarchy, and efficient workflows. This LMS prioritizes usability and data comprehension over decorative elements, while maintaining MELANIA CALVIN's professional and trustworthy brand aesthetic.
 
 ## Core Design Principles
 

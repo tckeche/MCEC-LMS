@@ -1,14 +1,15 @@
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
-  GraduationCap,
   BookOpen,
   Users,
   BarChart3,
   Shield,
   Award,
+  GraduationCap,
 } from "lucide-react";
 import { ThemeToggle } from "@/components/theme-toggle";
+import mcecLogo from "@assets/MCEC_Transparent_Logo_1765613479714.png";
 
 const features = [
   {
@@ -54,11 +55,8 @@ export default function Landing() {
     <div className="min-h-screen bg-background">
       <header className="sticky top-0 z-50 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
         <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 md:px-8">
-          <div className="flex items-center gap-2">
-            <GraduationCap className="h-8 w-8 text-primary" />
-            <span className="font-heading text-xl font-bold" data-testid="text-logo">
-              MCEC LMS
-            </span>
+          <div className="flex items-center gap-3">
+            <img src={mcecLogo} alt="MCEC Logo" className="h-12 object-contain" data-testid="img-logo" />
           </div>
           <div className="flex items-center gap-4">
             <ThemeToggle />
@@ -74,13 +72,12 @@ export default function Landing() {
           <div className="absolute inset-0 bg-gradient-to-br from-primary/5 via-transparent to-primary/10" />
           <div className="relative mx-auto max-w-7xl px-4 text-center md:px-8">
             <h1 className="font-heading text-4xl font-bold tracking-tight md:text-6xl" data-testid="text-hero-title">
-              Learning Management
+              MELANIA CALVIN
               <br />
-              <span className="text-primary">Made Simple</span>
+              <span className="text-primary">Educational Consultants</span>
             </h1>
             <p className="mx-auto mt-6 max-w-2xl text-lg text-muted-foreground md:text-xl" data-testid="text-hero-description">
-              A comprehensive platform for educational institutions to manage
-              courses, track student progress, and empower learning outcomes.
+              A comprehensive learning management platform designed by MELANIA CALVIN to help students succeed, support parents in their children's education, and empower tutors to deliver exceptional results.
             </p>
             <div className="mt-10 flex flex-col items-center justify-center gap-4 sm:flex-row">
               <Button size="lg" asChild data-testid="button-get-started">
@@ -133,7 +130,7 @@ export default function Landing() {
               Ready to Get Started?
             </h2>
             <p className="mt-4 text-lg text-muted-foreground">
-              Join MCEC LMS today and transform your educational experience.
+              Join MELANIA CALVIN Educational Consultants today and transform your educational experience.
             </p>
             <Button size="lg" className="mt-8" asChild data-testid="button-cta-signin">
               <a href="/api/login">Sign In Now</a>
@@ -145,7 +142,7 @@ export default function Landing() {
       <footer className="border-t py-8">
         <div className="mx-auto max-w-7xl px-4 text-center text-sm text-muted-foreground md:px-8">
           <p data-testid="text-footer">
-            &copy; {new Date().getFullYear()} MCEC LMS. All rights reserved.
+            &copy; {new Date().getFullYear()} MELANIA CALVIN Educational Consultants. All rights reserved.
           </p>
         </div>
       </footer>
