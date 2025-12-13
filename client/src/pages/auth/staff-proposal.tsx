@@ -25,6 +25,8 @@ export default function StaffProposal() {
   const [devEmail, setDevEmail] = useState("");
   const [devFirstName, setDevFirstName] = useState("");
   const [devLastName, setDevLastName] = useState("");
+  const [devPassword, setDevPassword] = useState("");
+  const [devConfirmPassword, setDevConfirmPassword] = useState("");
   const [devProposedRole, setDevProposedRole] = useState<string>("");
   const [devNotes, setDevNotes] = useState("");
   const [devSubmitting, setDevSubmitting] = useState(false);
@@ -82,6 +84,18 @@ export default function StaffProposal() {
       return;
     }
     
+    if (!devPassword || devPassword.length < 8) {
+      setDevError("Password must be at least 8 characters long");
+      setDevSubmitting(false);
+      return;
+    }
+    
+    if (devPassword !== devConfirmPassword) {
+      setDevError("Passwords do not match");
+      setDevSubmitting(false);
+      return;
+    }
+    
     if (!devProposedRole) {
       setDevError("Please select a role");
       setDevSubmitting(false);
@@ -96,6 +110,7 @@ export default function StaffProposal() {
           email: devEmail,
           firstName: devFirstName,
           lastName: devLastName,
+          password: devPassword,
           proposedRole: devProposedRole,
           notes: devNotes,
         }),
@@ -263,6 +278,32 @@ export default function StaffProposal() {
                   </div>
 
                   <div className="space-y-2">
+                    <Label htmlFor="devPassword">Password</Label>
+                    <Input
+                      id="devPassword"
+                      type="password"
+                      placeholder="Minimum 8 characters"
+                      value={devPassword}
+                      onChange={(e) => setDevPassword(e.target.value)}
+                      required
+                      data-testid="input-dev-password"
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="devConfirmPassword">Confirm Password</Label>
+                    <Input
+                      id="devConfirmPassword"
+                      type="password"
+                      placeholder="Confirm your password"
+                      value={devConfirmPassword}
+                      onChange={(e) => setDevConfirmPassword(e.target.value)}
+                      required
+                      data-testid="input-dev-confirm-password"
+                    />
+                  </div>
+
+                  <div className="space-y-2">
                     <Label htmlFor="devRole">Requested Role</Label>
                     <Select value={devProposedRole} onValueChange={setDevProposedRole}>
                       <SelectTrigger id="devRole" data-testid="select-dev-role">
@@ -296,6 +337,12 @@ export default function StaffProposal() {
                     >
                       {devSubmitting ? "Creating Account..." : "Create Staff Account"}
                     </Button>
+                    <div className="text-center text-sm text-muted-foreground">
+                      Already have an account?{" "}
+                      <Link href="/auth/staff-login" className="text-primary hover:underline" data-testid="link-login">
+                        Sign in
+                      </Link>
+                    </div>
                     <Button variant="ghost" asChild data-testid="button-back">
                       <Link href="/">
                         <ArrowLeft className="mr-2 h-4 w-4" />

@@ -18,6 +18,7 @@ import NotFound from "@/pages/not-found";
 import Landing from "@/pages/landing";
 import ParentSignup from "@/pages/auth/parent-signup";
 import StaffProposal from "@/pages/auth/staff-proposal";
+import StaffLogin from "@/pages/auth/staff-login";
 import mcecLogo from "@assets/MCEC_Transparent_Logo_1765615854771.jpg";
 import StudentDashboard from "@/pages/student/dashboard";
 import StudentCourses from "@/pages/student/courses";
@@ -222,6 +223,7 @@ function AppRouter() {
       <Switch>
         <Route path="/auth/parent-signup" component={ParentSignup} />
         <Route path="/auth/staff-proposal" component={StaffProposal} />
+        <Route path="/auth/staff-login" component={StaffLogin} />
         <Route component={NotFound} />
       </Switch>
     );
