@@ -614,16 +614,44 @@ export async function registerRoutes(
 
   // Create course (tutor/admin)
   app.post('/api/courses', isAuthenticated, requireRole("tutor", "admin", "manager"), async (req: Request, res: Response) => {
+    console.log("[POST /api/courses] Request entry");
+    console.log("[POST /api/courses] dbUser:", (req as any).dbUser);
+    console.log("[POST /api/courses] req.body:", req.body);
+    
     try {
-      const validated = insertCourseSchema.parse(req.body);
+      const dbUser = (req as any).dbUser;
+      
+      if (!dbUser || !dbUser.id) {
+        console.error("[POST /api/courses] No dbUser found");
+        return res.status(401).json({ message: "Unauthorized - user not found" });
+      }
+      
+      // Validate required fields
+      if (!req.body.title || req.body.title.trim() === "") {
+        return res.status(400).json({ message: "Title is required" });
+      }
+      
+      // Add tutorId from authenticated user if not provided (for tutors)
+      // Admins/managers can specify a different tutorId
+      const courseData = {
+        ...req.body,
+        tutorId: req.body.tutorId || dbUser.id,
+      };
+      
+      console.log("[POST /api/courses] courseData with tutorId:", courseData);
+      
+      const validated = insertCourseSchema.parse(courseData);
       const course = await storage.createCourse(validated);
-      res.status(201).json(course);
+      
+      console.log("[POST /api/courses] Course created successfully:", course.id);
+      return res.status(201).json(course);
     } catch (error) {
       if (error instanceof z.ZodError) {
+        console.error("[POST /api/courses] Zod validation error:", error.errors);
         return res.status(400).json({ message: "Invalid data", errors: error.errors });
       }
-      console.error("Error creating course:", error);
-      res.status(500).json({ message: "Failed to create course" });
+      console.error("[POST /api/courses] Error creating course:", error);
+      return res.status(500).json({ message: "Failed to create course" });
     }
   });
 
