@@ -1190,6 +1190,112 @@ export async function registerRoutes(
     }
   });
 
+  // Tutor students - get all students enrolled in tutor's courses with hours data
+  app.get('/api/tutor/students', isAuthenticated, requireRole("tutor"), async (req: Request, res: Response) => {
+    try {
+      const tutorId = req.user?.claims?.sub;
+      if (!tutorId) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+      
+      // Get tutor's courses
+      const courses = await storage.getCoursesByTutor(tutorId);
+      
+      // Fetch all sessions once for this tutor
+      const allTutorSessions = await storage.getTutoringSessionsByTutor(tutorId);
+      const completedSessions = allTutorSessions.filter(s => s.status === "completed");
+      
+      // Group sessions by student+course key for O(1) lookup
+      const sessionsByStudentCourse = new Map<string, number>();
+      for (const session of completedSessions) {
+        const key = `${session.studentId}:${session.courseId}`;
+        const current = sessionsByStudentCourse.get(key) || 0;
+        sessionsByStudentCourse.set(key, current + (session.billableMinutes || 0));
+      }
+      
+      // Get all students enrolled in tutor's courses
+      const studentsWithProgress = [];
+      
+      for (const course of courses) {
+        const enrollments = await storage.getEnrollmentsByCourse(course.id);
+        const courseAssignments = await storage.getAssignmentsByCourse(course.id);
+        const publishedAssignments = courseAssignments.filter(a => a.status === "published");
+        const totalAssignments = publishedAssignments.length;
+        
+        for (const enrollment of enrollments) {
+          if (!enrollment.student) continue;
+          
+          // Get submissions by this student for this course
+          const studentSubmissions = await storage.getSubmissionsByStudent(enrollment.studentId);
+          const courseSubmissions = studentSubmissions.filter(s => 
+            courseAssignments.some(a => a.id === s.assignmentId)
+          );
+          const assignmentsCompleted = courseSubmissions.filter(s => 
+            s.status === "submitted" || s.status === "graded"
+          ).length;
+          
+          // Get grades for average with safe defaults
+          const studentGrades = await storage.getGradesByStudent(enrollment.studentId);
+          const courseGrades = studentGrades.filter(g => 
+            courseAssignments.some(a => a.id === g.submission?.assignmentId)
+          );
+          
+          let averageGrade: number | null = null;
+          if (courseGrades.length > 0) {
+            let validGradeCount = 0;
+            const totalPercentage = courseGrades.reduce((sum, g) => {
+              const pointsPossible = g.submission?.assignment?.pointsPossible;
+              if (pointsPossible && pointsPossible > 0) {
+                validGradeCount++;
+                return sum + ((g.points || 0) / pointsPossible * 100);
+              }
+              return sum;
+            }, 0);
+            if (validGradeCount > 0) {
+              averageGrade = Math.round(totalPercentage / validGradeCount);
+            }
+          }
+          
+          // Get hours data from hour wallet
+          const wallet = await storage.getHourWalletByStudentCourse(enrollment.studentId, course.id);
+          const purchasedMinutes = wallet?.purchasedMinutes || 0;
+          const consumedMinutes = wallet?.consumedMinutes || 0;
+          const remainingMinutes = purchasedMinutes - consumedMinutes;
+          
+          // Get hours tutored from pre-grouped sessions
+          const sessionKey = `${enrollment.studentId}:${course.id}`;
+          const tutorMinutes = sessionsByStudentCourse.get(sessionKey) || 0;
+          const hoursUsed = tutorMinutes / 60;
+          const hoursRemaining = Math.max(0, remainingMinutes / 60);
+          
+          studentsWithProgress.push({
+            student: enrollment.student,
+            enrollment: {
+              id: enrollment.id,
+              courseId: enrollment.courseId,
+              studentId: enrollment.studentId,
+              status: enrollment.status,
+            },
+            courseName: course.title,
+            assignmentsCompleted,
+            totalAssignments,
+            averageGrade,
+            hoursUsed: Math.round(hoursUsed * 10) / 10,
+            hoursRemaining: Math.round(hoursRemaining * 10) / 10,
+          });
+        }
+      }
+      
+      res.json({
+        courses,
+        students: studentsWithProgress,
+      });
+    } catch (error) {
+      console.error("Error fetching tutor students:", error);
+      res.status(500).json({ message: "Failed to fetch students" });
+    }
+  });
+
   // Manager dashboard
   app.get('/api/manager/dashboard', isAuthenticated, requireRole("manager", "admin"), async (req: Request, res: Response) => {
     try {

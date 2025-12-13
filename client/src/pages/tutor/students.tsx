@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
-import { Users, Search, Mail } from "lucide-react";
+import { Users, Search, Mail, Clock } from "lucide-react";
 import { useState } from "react";
+import { PieChart, Pie, Cell, ResponsiveContainer } from "recharts";
 import { EmptyState } from "@/components/empty-state";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -24,20 +25,92 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Progress } from "@/components/ui/progress";
-import type { Course, User, Enrollment } from "@shared/schema";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import type { Course, User } from "@shared/schema";
 
 interface StudentWithProgress {
   student: User;
-  enrollment: Enrollment;
+  enrollment: {
+    id: string;
+    courseId: string;
+    studentId: string;
+    status: string;
+  };
   courseName: string;
   assignmentsCompleted: number;
   totalAssignments: number;
   averageGrade: number | null;
+  hoursUsed: number;
+  hoursRemaining: number;
 }
 
 interface TutorStudentsData {
   courses: Course[];
   students: StudentWithProgress[];
+}
+
+function HoursDonutChart({ hoursUsed, hoursRemaining, studentId }: { hoursUsed: number; hoursRemaining: number; studentId: string }) {
+  const total = hoursUsed + hoursRemaining;
+  
+  if (total === 0) {
+    return (
+      <div className="flex items-center gap-2" data-testid={`hours-empty-${studentId}`}>
+        <div className="flex h-10 w-10 items-center justify-center rounded-full bg-muted">
+          <Clock className="h-4 w-4 text-muted-foreground" />
+        </div>
+        <span className="text-sm text-muted-foreground">No hours</span>
+      </div>
+    );
+  }
+
+  const data = [
+    { name: "Used", value: hoursUsed },
+    { name: "Remaining", value: hoursRemaining },
+  ];
+  
+  const COLORS = ["hsl(var(--primary))", "hsl(var(--muted))"];
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <div className="flex items-center gap-2 cursor-help" data-testid={`hours-chart-${studentId}`}>
+          <div className="h-10 w-10">
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Pie
+                  data={data}
+                  innerRadius={12}
+                  outerRadius={18}
+                  dataKey="value"
+                  stroke="none"
+                  startAngle={90}
+                  endAngle={-270}
+                >
+                  {data.map((_, index) => (
+                    <Cell key={`cell-${index}`} fill={COLORS[index]} />
+                  ))}
+                </Pie>
+              </PieChart>
+            </ResponsiveContainer>
+          </div>
+          <div className="text-sm" data-testid={`hours-text-${studentId}`}>
+            <span className="font-medium">{hoursUsed}h</span>
+            <span className="text-muted-foreground"> / {total}h</span>
+          </div>
+        </div>
+      </TooltipTrigger>
+      <TooltipContent>
+        <div className="text-xs">
+          <p>Used: {hoursUsed} hours</p>
+          <p>Remaining: {hoursRemaining} hours</p>
+        </div>
+      </TooltipContent>
+    </Tooltip>
+  );
 }
 
 export default function TutorStudents() {
@@ -118,6 +191,7 @@ export default function TutorStudents() {
                   <TableRow>
                     <TableHead>Student</TableHead>
                     <TableHead>Course</TableHead>
+                    <TableHead>Hours</TableHead>
                     <TableHead>Progress</TableHead>
                     <TableHead>Average</TableHead>
                     <TableHead>Status</TableHead>
@@ -144,6 +218,13 @@ export default function TutorStudents() {
                         </div>
                       </TableCell>
                       <TableCell>{item.courseName}</TableCell>
+                      <TableCell>
+                        <HoursDonutChart 
+                          hoursUsed={item.hoursUsed} 
+                          hoursRemaining={item.hoursRemaining}
+                          studentId={item.student.id}
+                        />
+                      </TableCell>
                       <TableCell>
                         <div className="flex items-center gap-2">
                           <Progress
