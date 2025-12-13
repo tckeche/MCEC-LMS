@@ -417,6 +417,19 @@ export async function registerRoutes(
     }
   });
 
+  // Get active students for tutor enrollment (searchable dropdown)
+  app.get('/api/tutor/active-students', isAuthenticated, requireRole("tutor", "admin", "manager"), async (req: Request, res: Response) => {
+    try {
+      const students = await storage.getUsersByRole("student");
+      // Filter to only active students
+      const activeStudents = students.filter(s => s.isActive && s.status === "active");
+      res.json(activeStudents);
+    } catch (error) {
+      console.error("Error fetching active students:", error);
+      res.status(500).json({ message: "Failed to fetch students" });
+    }
+  });
+
   // ==========================================
   // ENROLLMENT ROUTES
   // ==========================================
@@ -447,10 +460,20 @@ export async function registerRoutes(
     }
   });
 
-  // Create enrollment
+  // Create enrollment (with ownership check for tutors)
   app.post('/api/enrollments', isAuthenticated, requireRole("admin", "manager", "tutor"), async (req: Request, res: Response) => {
     try {
+      const dbUser = (req as any).dbUser;
       const validated = insertEnrollmentSchema.parse(req.body);
+      
+      // Tutors can only enroll students in their own courses
+      if (dbUser.role === "tutor") {
+        const course = await storage.getCourse(validated.courseId);
+        if (!course || course.tutorId !== dbUser.id) {
+          return res.status(403).json({ message: "You can only enroll students in your own courses" });
+        }
+      }
+      
       const enrollment = await storage.createEnrollment(validated);
       res.status(201).json(enrollment);
     } catch (error) {
@@ -983,7 +1006,7 @@ export async function registerRoutes(
       // Get student enrollments to find courses
       const enrollmentList = await storage.getEnrollmentsByStudent(studentId);
       const activeCourseIds = enrollmentList
-        .filter(e => e.status === "enrolled")
+        .filter(e => e.status === "active")
         .map(e => e.courseId);
       
       // Get assignments for student
@@ -1180,7 +1203,7 @@ export async function registerRoutes(
           // Get child's enrollments
           const childEnrollments = await storage.getEnrollmentsByStudent(childId);
           const activeCourseIds = childEnrollments
-            .filter(e => e.status === "enrolled")
+            .filter(e => e.status === "active")
             .map(e => e.courseId);
           
           // Get assignments for child

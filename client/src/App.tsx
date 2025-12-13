@@ -33,6 +33,7 @@ import TutorGradebook from "@/pages/tutor/gradebook";
 import TutorStudents from "@/pages/tutor/students";
 import TutorAvailability from "@/pages/tutor/availability";
 import TutorProposals from "@/pages/tutor/proposals";
+import TutorCourseDetail from "@/pages/tutor/course-detail";
 import CalendarPage from "@/pages/calendar";
 import ManagerDashboard from "@/pages/manager/dashboard";
 import ManagerTutors from "@/pages/manager/tutors";
@@ -167,6 +168,7 @@ function TutorRoutes() {
     <Switch>
       <Route path="/" component={TutorDashboard} />
       <Route path="/tutor/courses" component={TutorCourses} />
+      <Route path="/tutor/courses/:id" component={TutorCourseDetail} />
       <Route path="/tutor/gradebook" component={TutorGradebook} />
       <Route path="/tutor/students" component={TutorStudents} />
       <Route path="/tutor/availability" component={TutorAvailability} />

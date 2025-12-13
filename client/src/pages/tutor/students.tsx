@@ -169,7 +169,6 @@ export default function TutorStudents() {
                       <TableCell>
                         <Badge
                           variant={item.enrollment.status === "active" ? "default" : "secondary"}
-                          size="sm"
                         >
                           {item.enrollment.status}
                         </Badge>

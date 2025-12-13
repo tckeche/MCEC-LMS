@@ -61,10 +61,7 @@ export default function TutorCourses() {
 
   const createCourseMutation = useMutation({
     mutationFn: async (data: CreateCourseFormData) => {
-      return apiRequest("/api/courses", {
-        method: "POST",
-        body: JSON.stringify(data),
-      });
+      return apiRequest("POST", "/api/courses", data);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/tutor/courses"] });
@@ -228,7 +225,7 @@ export default function TutorCourses() {
                   <CardTitle className="font-heading text-lg line-clamp-2">
                     {course.title}
                   </CardTitle>
-                  <Badge variant={course.isActive ? "default" : "secondary"} size="sm">
+                  <Badge variant={course.isActive ? "default" : "secondary"}>
                     {course.isActive ? "Active" : "Inactive"}
                   </Badge>
                 </div>
