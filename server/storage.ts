@@ -9,6 +9,10 @@ import {
   announcements,
   parentChildren,
   notifications,
+  tutorAvailability,
+  sessionProposals,
+  tutoringSessions,
+  hourWallets,
   type User,
   type UpsertUser,
   type Course,
@@ -36,9 +40,22 @@ import {
   type AnnouncementWithAuthor,
   type ParentChildWithDetails,
   type UserRole,
+  type TutorAvailability,
+  type InsertTutorAvailability,
+  type SessionProposal,
+  type InsertSessionProposal,
+  type SessionProposalWithDetails,
+  type TutoringSession,
+  type InsertTutoringSession,
+  type TutoringSessionWithDetails,
+  type HourWallet,
+  type InsertHourWallet,
+  type HourWalletWithDetails,
+  type ProposalStatus,
+  type TutoringSessionStatus,
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, and, desc, count, sql, inArray, or } from "drizzle-orm";
+import { eq, and, desc, count, sql, inArray, or, gte, lte, ne } from "drizzle-orm";
 
 export interface IStorage {
   // User operations (mandatory for Replit Auth)
@@ -135,6 +152,39 @@ export interface IStorage {
   
   // Helper to get enrolled students for a course (for notifications)
   getEnrolledStudentIds(courseId: string): Promise<string[]>;
+  
+  // ==========================================
+  // SCHEDULING SYSTEM OPERATIONS
+  // ==========================================
+  
+  // Tutor Availability operations
+  getTutorAvailability(tutorId: string): Promise<TutorAvailability[]>;
+  createTutorAvailability(availability: InsertTutorAvailability): Promise<TutorAvailability>;
+  updateTutorAvailability(id: string, tutorId: string, updates: Partial<InsertTutorAvailability>): Promise<TutorAvailability | undefined>;
+  deleteTutorAvailability(id: string, tutorId: string): Promise<boolean>;
+  
+  // Session Proposal operations
+  getSessionProposal(id: string): Promise<SessionProposalWithDetails | undefined>;
+  getSessionProposalsByTutor(tutorId: string, status?: ProposalStatus): Promise<SessionProposalWithDetails[]>;
+  getSessionProposalsByStudent(studentId: string): Promise<SessionProposalWithDetails[]>;
+  createSessionProposal(proposal: InsertSessionProposal): Promise<SessionProposal>;
+  updateSessionProposalStatus(id: string, status: ProposalStatus, tutorResponse?: string): Promise<SessionProposal | undefined>;
+  
+  // Tutoring Session operations
+  getTutoringSession(id: string): Promise<TutoringSessionWithDetails | undefined>;
+  getTutoringSessionsByTutor(tutorId: string, status?: TutoringSessionStatus): Promise<TutoringSessionWithDetails[]>;
+  getTutoringSessionsByStudent(studentId: string, status?: TutoringSessionStatus): Promise<TutoringSessionWithDetails[]>;
+  createTutoringSession(session: InsertTutoringSession): Promise<TutoringSession>;
+  updateTutoringSession(id: string, updates: Partial<InsertTutoringSession>): Promise<TutoringSession | undefined>;
+  checkDoubleBooking(tutorId: string, startTime: Date, endTime: Date, excludeSessionId?: string): Promise<boolean>;
+  
+  // Hour Wallet operations
+  getHourWallet(id: string): Promise<HourWalletWithDetails | undefined>;
+  getHourWalletByStudentCourse(studentId: string, courseId: string): Promise<HourWallet | undefined>;
+  getHourWalletsByStudent(studentId: string): Promise<HourWalletWithDetails[]>;
+  createHourWallet(wallet: InsertHourWallet): Promise<HourWallet>;
+  addMinutesToWallet(studentId: string, courseId: string, minutes: number): Promise<HourWallet | undefined>;
+  deductMinutesFromWallet(studentId: string, courseId: string, minutes: number): Promise<HourWallet | undefined>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -884,6 +934,300 @@ export class DatabaseStorage implements IStorage {
         eq(enrollments.status, "active")
       ));
     return result.map(r => r.studentId);
+  }
+
+  // ==========================================
+  // SCHEDULING SYSTEM IMPLEMENTATIONS
+  // ==========================================
+
+  // Tutor Availability operations
+  async getTutorAvailability(tutorId: string): Promise<TutorAvailability[]> {
+    return db
+      .select()
+      .from(tutorAvailability)
+      .where(and(
+        eq(tutorAvailability.tutorId, tutorId),
+        eq(tutorAvailability.isActive, true)
+      ))
+      .orderBy(tutorAvailability.dayOfWeek, tutorAvailability.startTime);
+  }
+
+  async createTutorAvailability(availability: InsertTutorAvailability): Promise<TutorAvailability> {
+    const [newAvailability] = await db.insert(tutorAvailability).values(availability).returning();
+    return newAvailability;
+  }
+
+  async updateTutorAvailability(id: string, tutorId: string, updates: Partial<InsertTutorAvailability>): Promise<TutorAvailability | undefined> {
+    const [updated] = await db
+      .update(tutorAvailability)
+      .set(updates)
+      .where(and(eq(tutorAvailability.id, id), eq(tutorAvailability.tutorId, tutorId)))
+      .returning();
+    return updated;
+  }
+
+  async deleteTutorAvailability(id: string, tutorId: string): Promise<boolean> {
+    const result = await db
+      .delete(tutorAvailability)
+      .where(and(eq(tutorAvailability.id, id), eq(tutorAvailability.tutorId, tutorId)))
+      .returning();
+    return result.length > 0;
+  }
+
+  // Session Proposal operations
+  async getSessionProposal(id: string): Promise<SessionProposalWithDetails | undefined> {
+    const result = await db
+      .select()
+      .from(sessionProposals)
+      .innerJoin(users, eq(sessionProposals.studentId, users.id))
+      .innerJoin(courses, eq(sessionProposals.courseId, courses.id))
+      .where(eq(sessionProposals.id, id));
+    
+    if (result.length === 0) return undefined;
+    
+    const [tutorUser] = await db.select().from(users).where(eq(users.id, result[0].session_proposals.tutorId));
+    
+    return {
+      ...result[0].session_proposals,
+      student: result[0].users,
+      tutor: tutorUser,
+      course: result[0].courses,
+    };
+  }
+
+  async getSessionProposalsByTutor(tutorId: string, status?: ProposalStatus): Promise<SessionProposalWithDetails[]> {
+    const conditions = [eq(sessionProposals.tutorId, tutorId)];
+    if (status) conditions.push(eq(sessionProposals.status, status));
+    
+    const result = await db
+      .select()
+      .from(sessionProposals)
+      .innerJoin(users, eq(sessionProposals.studentId, users.id))
+      .innerJoin(courses, eq(sessionProposals.courseId, courses.id))
+      .where(and(...conditions))
+      .orderBy(desc(sessionProposals.createdAt));
+    
+    const [tutor] = await db.select().from(users).where(eq(users.id, tutorId));
+    
+    return result.map(r => ({
+      ...r.session_proposals,
+      student: r.users,
+      tutor,
+      course: r.courses,
+    }));
+  }
+
+  async getSessionProposalsByStudent(studentId: string): Promise<SessionProposalWithDetails[]> {
+    const result = await db
+      .select()
+      .from(sessionProposals)
+      .innerJoin(users, eq(sessionProposals.tutorId, users.id))
+      .innerJoin(courses, eq(sessionProposals.courseId, courses.id))
+      .where(eq(sessionProposals.studentId, studentId))
+      .orderBy(desc(sessionProposals.createdAt));
+    
+    const [student] = await db.select().from(users).where(eq(users.id, studentId));
+    
+    return result.map(r => ({
+      ...r.session_proposals,
+      student,
+      tutor: r.users,
+      course: r.courses,
+    }));
+  }
+
+  async createSessionProposal(proposal: InsertSessionProposal): Promise<SessionProposal> {
+    const [newProposal] = await db.insert(sessionProposals).values(proposal).returning();
+    return newProposal;
+  }
+
+  async updateSessionProposalStatus(id: string, status: ProposalStatus, tutorResponse?: string): Promise<SessionProposal | undefined> {
+    const [updated] = await db
+      .update(sessionProposals)
+      .set({ status, tutorResponse })
+      .where(eq(sessionProposals.id, id))
+      .returning();
+    return updated;
+  }
+
+  // Tutoring Session operations
+  async getTutoringSession(id: string): Promise<TutoringSessionWithDetails | undefined> {
+    const result = await db
+      .select()
+      .from(tutoringSessions)
+      .innerJoin(users, eq(tutoringSessions.studentId, users.id))
+      .innerJoin(courses, eq(tutoringSessions.courseId, courses.id))
+      .where(eq(tutoringSessions.id, id));
+    
+    if (result.length === 0) return undefined;
+    
+    const [tutorUser] = await db.select().from(users).where(eq(users.id, result[0].tutoring_sessions.tutorId));
+    
+    return {
+      ...result[0].tutoring_sessions,
+      student: result[0].users,
+      tutor: tutorUser,
+      course: result[0].courses,
+    };
+  }
+
+  async getTutoringSessionsByTutor(tutorId: string, status?: TutoringSessionStatus): Promise<TutoringSessionWithDetails[]> {
+    const conditions = [eq(tutoringSessions.tutorId, tutorId)];
+    if (status) conditions.push(eq(tutoringSessions.status, status));
+    
+    const result = await db
+      .select()
+      .from(tutoringSessions)
+      .innerJoin(users, eq(tutoringSessions.studentId, users.id))
+      .innerJoin(courses, eq(tutoringSessions.courseId, courses.id))
+      .where(and(...conditions))
+      .orderBy(desc(tutoringSessions.scheduledStartTime));
+    
+    const [tutor] = await db.select().from(users).where(eq(users.id, tutorId));
+    
+    return result.map(r => ({
+      ...r.tutoring_sessions,
+      student: r.users,
+      tutor,
+      course: r.courses,
+    }));
+  }
+
+  async getTutoringSessionsByStudent(studentId: string, status?: TutoringSessionStatus): Promise<TutoringSessionWithDetails[]> {
+    const conditions = [eq(tutoringSessions.studentId, studentId)];
+    if (status) conditions.push(eq(tutoringSessions.status, status));
+    
+    const result = await db
+      .select()
+      .from(tutoringSessions)
+      .innerJoin(users, eq(tutoringSessions.tutorId, users.id))
+      .innerJoin(courses, eq(tutoringSessions.courseId, courses.id))
+      .where(and(...conditions))
+      .orderBy(desc(tutoringSessions.scheduledStartTime));
+    
+    const [student] = await db.select().from(users).where(eq(users.id, studentId));
+    
+    return result.map(r => ({
+      ...r.tutoring_sessions,
+      student,
+      tutor: r.users,
+      course: r.courses,
+    }));
+  }
+
+  async createTutoringSession(session: InsertTutoringSession): Promise<TutoringSession> {
+    const [newSession] = await db.insert(tutoringSessions).values(session).returning();
+    return newSession;
+  }
+
+  async updateTutoringSession(id: string, updates: Partial<InsertTutoringSession>): Promise<TutoringSession | undefined> {
+    const [updated] = await db
+      .update(tutoringSessions)
+      .set(updates)
+      .where(eq(tutoringSessions.id, id))
+      .returning();
+    return updated;
+  }
+
+  async checkDoubleBooking(tutorId: string, startTime: Date, endTime: Date, excludeSessionId?: string): Promise<boolean> {
+    const conditions = [
+      eq(tutoringSessions.tutorId, tutorId),
+      inArray(tutoringSessions.status, ["scheduled", "in_progress"]),
+      or(
+        and(lte(tutoringSessions.scheduledStartTime, startTime), gte(tutoringSessions.scheduledEndTime, startTime)),
+        and(lte(tutoringSessions.scheduledStartTime, endTime), gte(tutoringSessions.scheduledEndTime, endTime)),
+        and(gte(tutoringSessions.scheduledStartTime, startTime), lte(tutoringSessions.scheduledEndTime, endTime))
+      )
+    ];
+    
+    if (excludeSessionId) {
+      conditions.push(ne(tutoringSessions.id, excludeSessionId));
+    }
+    
+    const result = await db
+      .select({ count: count() })
+      .from(tutoringSessions)
+      .where(and(...conditions));
+    
+    return Number(result[0]?.count || 0) > 0;
+  }
+
+  // Hour Wallet operations
+  async getHourWallet(id: string): Promise<HourWalletWithDetails | undefined> {
+    const result = await db
+      .select()
+      .from(hourWallets)
+      .innerJoin(users, eq(hourWallets.studentId, users.id))
+      .innerJoin(courses, eq(hourWallets.courseId, courses.id))
+      .where(eq(hourWallets.id, id));
+    
+    if (result.length === 0) return undefined;
+    
+    return {
+      ...result[0].hour_wallets,
+      student: result[0].users,
+      course: result[0].courses,
+    };
+  }
+
+  async getHourWalletByStudentCourse(studentId: string, courseId: string): Promise<HourWallet | undefined> {
+    const [wallet] = await db
+      .select()
+      .from(hourWallets)
+      .where(and(eq(hourWallets.studentId, studentId), eq(hourWallets.courseId, courseId)));
+    return wallet;
+  }
+
+  async getHourWalletsByStudent(studentId: string): Promise<HourWalletWithDetails[]> {
+    const result = await db
+      .select()
+      .from(hourWallets)
+      .innerJoin(users, eq(hourWallets.studentId, users.id))
+      .innerJoin(courses, eq(hourWallets.courseId, courses.id))
+      .where(eq(hourWallets.studentId, studentId));
+    
+    return result.map(r => ({
+      ...r.hour_wallets,
+      student: r.users,
+      course: r.courses,
+    }));
+  }
+
+  async createHourWallet(wallet: InsertHourWallet): Promise<HourWallet> {
+    const [newWallet] = await db.insert(hourWallets).values(wallet).returning();
+    return newWallet;
+  }
+
+  async addMinutesToWallet(studentId: string, courseId: string, minutes: number): Promise<HourWallet | undefined> {
+    const existing = await this.getHourWalletByStudentCourse(studentId, courseId);
+    if (!existing) {
+      return this.createHourWallet({ studentId, courseId, purchasedMinutes: minutes, consumedMinutes: 0 });
+    }
+    
+    const [updated] = await db
+      .update(hourWallets)
+      .set({ 
+        purchasedMinutes: existing.purchasedMinutes + minutes,
+        updatedAt: new Date()
+      })
+      .where(eq(hourWallets.id, existing.id))
+      .returning();
+    return updated;
+  }
+
+  async deductMinutesFromWallet(studentId: string, courseId: string, minutes: number): Promise<HourWallet | undefined> {
+    const existing = await this.getHourWalletByStudentCourse(studentId, courseId);
+    if (!existing) return undefined;
+    
+    const [updated] = await db
+      .update(hourWallets)
+      .set({ 
+        consumedMinutes: existing.consumedMinutes + minutes,
+        updatedAt: new Date()
+      })
+      .where(eq(hourWallets.id, existing.id))
+      .returning();
+    return updated;
   }
 }
 
