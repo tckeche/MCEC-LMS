@@ -10,6 +10,7 @@ import {
   Megaphone,
   UserCog,
   FileText,
+  Calendar,
 } from "lucide-react";
 import {
   Sidebar,
@@ -59,6 +60,12 @@ const navItems: NavItem[] = [
     roles: ["student", "parent"],
   },
   {
+    title: "Schedule Tutoring",
+    url: "/scheduling",
+    icon: Calendar,
+    roles: ["student"],
+  },
+  {
     title: "Course Management",
     url: "/tutor/courses",
     icon: BookOpen,
@@ -74,6 +81,18 @@ const navItems: NavItem[] = [
     title: "Students",
     url: "/tutor/students",
     icon: Users,
+    roles: ["tutor"],
+  },
+  {
+    title: "My Availability",
+    url: "/tutor/availability",
+    icon: Calendar,
+    roles: ["tutor"],
+  },
+  {
+    title: "Session Requests",
+    url: "/tutor/proposals",
+    icon: ClipboardList,
     roles: ["tutor"],
   },
   {

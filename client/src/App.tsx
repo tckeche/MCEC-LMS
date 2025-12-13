@@ -17,11 +17,14 @@ import StudentDashboard from "@/pages/student/dashboard";
 import StudentCourses from "@/pages/student/courses";
 import StudentAssignments from "@/pages/student/assignments";
 import StudentGrades from "@/pages/student/grades";
+import StudentScheduling from "@/pages/student/scheduling";
 import ParentDashboard from "@/pages/parent/dashboard";
 import TutorDashboard from "@/pages/tutor/dashboard";
 import TutorCourses from "@/pages/tutor/courses";
 import TutorGradebook from "@/pages/tutor/gradebook";
 import TutorStudents from "@/pages/tutor/students";
+import TutorAvailability from "@/pages/tutor/availability";
+import TutorProposals from "@/pages/tutor/proposals";
 import ManagerDashboard from "@/pages/manager/dashboard";
 import AdminDashboard from "@/pages/admin/dashboard";
 import AdminUsers from "@/pages/admin/users";
@@ -70,6 +73,7 @@ function StudentRoutes() {
       <Route path="/courses" component={StudentCourses} />
       <Route path="/assignments" component={StudentAssignments} />
       <Route path="/grades" component={StudentGrades} />
+      <Route path="/scheduling" component={StudentScheduling} />
       <Route component={NotFound} />
     </Switch>
   );
@@ -93,6 +97,8 @@ function TutorRoutes() {
       <Route path="/tutor/courses" component={TutorCourses} />
       <Route path="/tutor/gradebook" component={TutorGradebook} />
       <Route path="/tutor/students" component={TutorStudents} />
+      <Route path="/tutor/availability" component={TutorAvailability} />
+      <Route path="/tutor/proposals" component={TutorProposals} />
       <Route path="/announcements" component={Announcements} />
       <Route component={NotFound} />
     </Switch>
