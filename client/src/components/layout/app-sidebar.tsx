@@ -14,6 +14,7 @@ import {
   Wallet,
   UserCheck,
   LogOut,
+  Shield,
 } from "lucide-react";
 import {
   Sidebar,
@@ -35,6 +36,7 @@ interface NavItem {
   url: string;
   icon: React.ComponentType<{ className?: string }>;
   roles: UserRole[];
+  superAdminOnly?: boolean;
 }
 
 const navItems: NavItem[] = [
@@ -176,6 +178,13 @@ const navItems: NavItem[] = [
     icon: Settings,
     roles: ["admin"],
   },
+  {
+    title: "Super Admin",
+    url: "/admin/super-admin",
+    icon: Shield,
+    roles: ["admin"],
+    superAdminOnly: true,
+  },
 ];
 
 export function AppSidebar() {
@@ -184,15 +193,16 @@ export function AppSidebar() {
 
   if (!user) return null;
 
-  const filteredItems = navItems.filter((item) =>
-    item.roles.includes(user.role as UserRole)
-  );
+  const filteredItems = navItems.filter((item) => {
+    if (item.superAdminOnly && !user.isSuperAdmin) return false;
+    return item.roles.includes(user.role as UserRole);
+  });
 
   const mainItems = filteredItems.filter(
-    (item) => !["Settings", "Announcements"].includes(item.title)
+    (item) => !["Settings", "Announcements", "Super Admin"].includes(item.title)
   );
   const secondaryItems = filteredItems.filter((item) =>
-    ["Settings", "Announcements"].includes(item.title)
+    ["Settings", "Announcements", "Super Admin"].includes(item.title)
   );
 
   return (
