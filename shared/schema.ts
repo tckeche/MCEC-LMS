@@ -36,6 +36,41 @@ export const submissionStatusEnum = pgEnum("submission_status", [
   "late",
 ]);
 
+// Financial system enums
+export const invoiceStatusEnum = pgEnum("invoice_status", [
+  "draft",
+  "awaiting_payment",
+  "paid",
+  "overdue",
+  "disputed",
+  "verified",
+]);
+
+export const currencyCodeEnum = pgEnum("currency_code", [
+  "ZAR",
+  "USD",
+  "GBP",
+]);
+
+export const paymentVerificationStatusEnum = pgEnum("payment_verification_status", [
+  "pending",
+  "verified",
+  "rejected",
+]);
+
+export const walletStatusEnum = pgEnum("wallet_status", [
+  "active",
+  "depleted",
+  "expired",
+]);
+
+export const payoutStatusEnum = pgEnum("payout_status", [
+  "draft",
+  "approved",
+  "paid",
+  "on_hold",
+]);
+
 export const enrollmentStatusEnum = pgEnum("enrollment_status", [
   "active",
   "completed",
@@ -307,8 +342,97 @@ export const hourWallets = pgTable("hour_wallets", {
     .references(() => courses.id, { onDelete: "cascade" }),
   purchasedMinutes: integer("purchased_minutes").default(0).notNull(),
   consumedMinutes: integer("consumed_minutes").default(0).notNull(),
+  status: walletStatusEnum("status").default("active").notNull(),
+  expiresAt: timestamp("expires_at"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// ==========================================
+// FINANCIAL SYSTEM TABLES
+// ==========================================
+
+// Invoice sequence for generating INV001223 style numbers
+export const invoiceSequence = pgTable("invoice_sequence", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  yearMonth: varchar("year_month", { length: 4 }).notNull().unique(),
+  lastSequence: integer("last_sequence").default(0).notNull(),
+});
+
+// Invoices (monthly per student, billed to parent)
+export const invoices = pgTable("invoices", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  invoiceNumber: varchar("invoice_number", { length: 20 }).notNull().unique(),
+  parentId: varchar("parent_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  studentId: varchar("student_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  billingPeriodStart: timestamp("billing_period_start").notNull(),
+  billingPeriodEnd: timestamp("billing_period_end").notNull(),
+  currency: currencyCodeEnum("currency").default("ZAR").notNull(),
+  subtotal: decimal("subtotal", { precision: 10, scale: 2 }).default("0").notNull(),
+  taxAmount: decimal("tax_amount", { precision: 10, scale: 2 }).default("0").notNull(),
+  totalAmount: decimal("total_amount", { precision: 10, scale: 2 }).default("0").notNull(),
+  amountPaid: decimal("amount_paid", { precision: 10, scale: 2 }).default("0").notNull(),
+  amountOutstanding: decimal("amount_outstanding", { precision: 10, scale: 2 }).default("0").notNull(),
+  status: invoiceStatusEnum("status").default("draft").notNull(),
+  dueDate: timestamp("due_date"),
+  pdfUrl: varchar("pdf_url"),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Invoice Line Items (one per subject/course)
+export const invoiceLineItems = pgTable("invoice_line_items", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  invoiceId: varchar("invoice_id")
+    .notNull()
+    .references(() => invoices.id, { onDelete: "cascade" }),
+  courseId: varchar("course_id")
+    .notNull()
+    .references(() => courses.id, { onDelete: "cascade" }),
+  description: varchar("description", { length: 255 }).notNull(),
+  hours: decimal("hours", { precision: 6, scale: 2 }).notNull(),
+  hourlyRate: decimal("hourly_rate", { precision: 10, scale: 2 }).notNull(),
+  amount: decimal("amount", { precision: 10, scale: 2 }).notNull(),
+  minutesToAdd: integer("minutes_to_add").default(0).notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+// Invoice Payments (proof of payment uploads)
+export const invoicePayments = pgTable("invoice_payments", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  invoiceId: varchar("invoice_id")
+    .notNull()
+    .references(() => invoices.id, { onDelete: "cascade" }),
+  amount: decimal("amount", { precision: 10, scale: 2 }).notNull(),
+  currency: currencyCodeEnum("currency").default("ZAR").notNull(),
+  paymentMethod: varchar("payment_method", { length: 50 }),
+  paymentReference: varchar("payment_reference", { length: 100 }),
+  proofAssetUrl: varchar("proof_asset_url"),
+  verificationStatus: paymentVerificationStatusEnum("verification_status").default("pending").notNull(),
+  verifiedById: varchar("verified_by_id").references(() => users.id),
+  verifiedAt: timestamp("verified_at"),
+  rejectionReason: text("rejection_reason"),
+  receivedAt: timestamp("received_at").defaultNow(),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+// Wallet Transactions (audit log for wallet changes)
+export const walletTransactions = pgTable("wallet_transactions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  walletId: varchar("wallet_id")
+    .notNull()
+    .references(() => hourWallets.id, { onDelete: "cascade" }),
+  invoiceId: varchar("invoice_id").references(() => invoices.id),
+  minutesDelta: integer("minutes_delta").notNull(),
+  balanceAfter: integer("balance_after").notNull(),
+  reason: varchar("reason", { length: 255 }).notNull(),
+  performedById: varchar("performed_by_id").references(() => users.id),
+  createdAt: timestamp("created_at").defaultNow(),
 });
 
 // Relations
@@ -466,6 +590,59 @@ export const sessionAttendanceRelations = relations(sessionAttendance, ({ one })
   }),
   student: one(users, {
     fields: [sessionAttendance.studentId],
+    references: [users.id],
+  }),
+}));
+
+// Financial system relations
+export const invoicesRelations = relations(invoices, ({ one, many }) => ({
+  parent: one(users, {
+    fields: [invoices.parentId],
+    references: [users.id],
+    relationName: "invoiceParent",
+  }),
+  student: one(users, {
+    fields: [invoices.studentId],
+    references: [users.id],
+    relationName: "invoiceStudent",
+  }),
+  lineItems: many(invoiceLineItems),
+  payments: many(invoicePayments),
+}));
+
+export const invoiceLineItemsRelations = relations(invoiceLineItems, ({ one }) => ({
+  invoice: one(invoices, {
+    fields: [invoiceLineItems.invoiceId],
+    references: [invoices.id],
+  }),
+  course: one(courses, {
+    fields: [invoiceLineItems.courseId],
+    references: [courses.id],
+  }),
+}));
+
+export const invoicePaymentsRelations = relations(invoicePayments, ({ one }) => ({
+  invoice: one(invoices, {
+    fields: [invoicePayments.invoiceId],
+    references: [invoices.id],
+  }),
+  verifiedBy: one(users, {
+    fields: [invoicePayments.verifiedById],
+    references: [users.id],
+  }),
+}));
+
+export const walletTransactionsRelations = relations(walletTransactions, ({ one }) => ({
+  wallet: one(hourWallets, {
+    fields: [walletTransactions.walletId],
+    references: [hourWallets.id],
+  }),
+  invoice: one(invoices, {
+    fields: [walletTransactions.invoiceId],
+    references: [invoices.id],
+  }),
+  performedBy: one(users, {
+    fields: [walletTransactions.performedById],
     references: [users.id],
   }),
 }));
@@ -660,4 +837,63 @@ export type TutoringSessionWithDetails = TutoringSession & {
 export type HourWalletWithDetails = HourWallet & {
   student: User;
   course: Course;
+};
+
+// Financial system insert schemas
+export const insertInvoiceSchema = createInsertSchema(invoices).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const insertInvoiceLineItemSchema = createInsertSchema(invoiceLineItems).omit({
+  id: true,
+  createdAt: true,
+});
+
+export const insertInvoicePaymentSchema = createInsertSchema(invoicePayments).omit({
+  id: true,
+  createdAt: true,
+  receivedAt: true,
+});
+
+export const insertWalletTransactionSchema = createInsertSchema(walletTransactions).omit({
+  id: true,
+  createdAt: true,
+});
+
+// Financial system types
+export type Invoice = typeof invoices.$inferSelect;
+export type InsertInvoice = z.infer<typeof insertInvoiceSchema>;
+
+export type InvoiceLineItem = typeof invoiceLineItems.$inferSelect;
+export type InsertInvoiceLineItem = z.infer<typeof insertInvoiceLineItemSchema>;
+
+export type InvoicePayment = typeof invoicePayments.$inferSelect;
+export type InsertInvoicePayment = z.infer<typeof insertInvoicePaymentSchema>;
+
+export type WalletTransaction = typeof walletTransactions.$inferSelect;
+export type InsertWalletTransaction = z.infer<typeof insertWalletTransactionSchema>;
+
+export type InvoiceStatus = "draft" | "awaiting_payment" | "paid" | "overdue" | "disputed" | "verified";
+export type CurrencyCode = "ZAR" | "USD" | "GBP";
+export type PaymentVerificationStatus = "pending" | "verified" | "rejected";
+export type WalletStatus = "active" | "depleted" | "expired";
+export type PayoutStatus = "draft" | "approved" | "paid" | "on_hold";
+
+// Extended types for financial system
+export type InvoiceWithDetails = Invoice & {
+  parent: User;
+  student: User;
+  lineItems: (InvoiceLineItem & { course: Course })[];
+  payments: InvoicePayment[];
+};
+
+export type InvoiceLineItemWithCourse = InvoiceLineItem & {
+  course: Course;
+};
+
+export type InvoicePaymentWithDetails = InvoicePayment & {
+  invoice: Invoice;
+  verifiedBy?: User;
 };
