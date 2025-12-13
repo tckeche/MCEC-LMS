@@ -14,6 +14,11 @@ import {
   tutoringSessions,
   hourWallets,
   sessionAttendance,
+  invoices,
+  invoiceLineItems,
+  invoicePayments,
+  walletTransactions,
+  invoiceSequence,
   type User,
   type UpsertUser,
   type Course,
@@ -56,6 +61,17 @@ import {
   type InsertSessionAttendance,
   type ProposalStatus,
   type TutoringSessionStatus,
+  type Invoice,
+  type InsertInvoice,
+  type InvoiceWithDetails,
+  type InvoiceLineItem,
+  type InsertInvoiceLineItem,
+  type InvoicePayment,
+  type InsertInvoicePayment,
+  type WalletTransaction,
+  type InsertWalletTransaction,
+  type InvoiceStatus,
+  type PaymentVerificationStatus,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, and, desc, count, sql, inArray, or, gte, lte, ne } from "drizzle-orm";
@@ -194,6 +210,36 @@ export interface IStorage {
   getStudentSessionAttendance(sessionId: string, studentId: string): Promise<SessionAttendance | undefined>;
   createSessionAttendance(attendance: InsertSessionAttendance): Promise<SessionAttendance>;
   updateSessionAttendance(id: string, updates: Partial<InsertSessionAttendance>): Promise<SessionAttendance | undefined>;
+  
+  // ==========================================
+  // FINANCIAL SYSTEM OPERATIONS
+  // ==========================================
+  
+  // Invoice operations
+  getInvoice(id: string): Promise<Invoice | undefined>;
+  getInvoiceWithDetails(id: string): Promise<InvoiceWithDetails | undefined>;
+  getInvoicesByParent(parentId: string): Promise<InvoiceWithDetails[]>;
+  getInvoicesByStudent(studentId: string): Promise<InvoiceWithDetails[]>;
+  getAllInvoices(status?: InvoiceStatus): Promise<InvoiceWithDetails[]>;
+  createInvoice(invoice: InsertInvoice): Promise<Invoice>;
+  updateInvoice(id: string, updates: Partial<InsertInvoice>): Promise<Invoice | undefined>;
+  generateInvoiceNumber(): Promise<string>;
+  
+  // Invoice Line Item operations
+  getInvoiceLineItems(invoiceId: string): Promise<InvoiceLineItem[]>;
+  createInvoiceLineItem(lineItem: InsertInvoiceLineItem): Promise<InvoiceLineItem>;
+  deleteInvoiceLineItems(invoiceId: string): Promise<boolean>;
+  
+  // Invoice Payment operations
+  getInvoicePayment(id: string): Promise<InvoicePayment | undefined>;
+  getInvoicePayments(invoiceId: string): Promise<InvoicePayment[]>;
+  getPendingPayments(): Promise<InvoicePayment[]>;
+  createInvoicePayment(payment: InsertInvoicePayment): Promise<InvoicePayment>;
+  updatePaymentVerification(id: string, status: PaymentVerificationStatus, verifiedById: string, rejectionReason?: string): Promise<InvoicePayment | undefined>;
+  
+  // Wallet Transaction operations
+  getWalletTransactions(walletId: string): Promise<WalletTransaction[]>;
+  createWalletTransaction(transaction: InsertWalletTransaction): Promise<WalletTransaction>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -1264,6 +1310,214 @@ export class DatabaseStorage implements IStorage {
       .where(eq(sessionAttendance.id, id))
       .returning();
     return updated;
+  }
+
+  // ==========================================
+  // FINANCIAL SYSTEM OPERATIONS
+  // ==========================================
+
+  // Invoice operations
+  async getInvoice(id: string): Promise<Invoice | undefined> {
+    const [invoice] = await db.select().from(invoices).where(eq(invoices.id, id));
+    return invoice;
+  }
+
+  async getInvoiceWithDetails(id: string): Promise<InvoiceWithDetails | undefined> {
+    const invoiceResult = await db
+      .select()
+      .from(invoices)
+      .innerJoin(users, eq(invoices.parentId, users.id))
+      .where(eq(invoices.id, id));
+    
+    if (invoiceResult.length === 0) return undefined;
+    
+    const invoice = invoiceResult[0].invoices;
+    const parent = invoiceResult[0].users;
+    
+    const [student] = await db.select().from(users).where(eq(users.id, invoice.studentId));
+    
+    const lineItemsResult = await db
+      .select()
+      .from(invoiceLineItems)
+      .innerJoin(courses, eq(invoiceLineItems.courseId, courses.id))
+      .where(eq(invoiceLineItems.invoiceId, id));
+    
+    const payments = await db
+      .select()
+      .from(invoicePayments)
+      .where(eq(invoicePayments.invoiceId, id));
+    
+    return {
+      ...invoice,
+      parent,
+      student,
+      lineItems: lineItemsResult.map(r => ({
+        ...r.invoice_line_items,
+        course: r.courses,
+      })),
+      payments,
+    };
+  }
+
+  async getInvoicesByParent(parentId: string): Promise<InvoiceWithDetails[]> {
+    const invoiceResult = await db
+      .select()
+      .from(invoices)
+      .where(eq(invoices.parentId, parentId))
+      .orderBy(desc(invoices.createdAt));
+    
+    const results: InvoiceWithDetails[] = [];
+    for (const invoice of invoiceResult) {
+      const details = await this.getInvoiceWithDetails(invoice.id);
+      if (details) results.push(details);
+    }
+    return results;
+  }
+
+  async getInvoicesByStudent(studentId: string): Promise<InvoiceWithDetails[]> {
+    const invoiceResult = await db
+      .select()
+      .from(invoices)
+      .where(eq(invoices.studentId, studentId))
+      .orderBy(desc(invoices.createdAt));
+    
+    const results: InvoiceWithDetails[] = [];
+    for (const invoice of invoiceResult) {
+      const details = await this.getInvoiceWithDetails(invoice.id);
+      if (details) results.push(details);
+    }
+    return results;
+  }
+
+  async getAllInvoices(status?: InvoiceStatus): Promise<InvoiceWithDetails[]> {
+    const query = status 
+      ? db.select().from(invoices).where(eq(invoices.status, status)).orderBy(desc(invoices.createdAt))
+      : db.select().from(invoices).orderBy(desc(invoices.createdAt));
+    
+    const invoiceResult = await query;
+    
+    const results: InvoiceWithDetails[] = [];
+    for (const invoice of invoiceResult) {
+      const details = await this.getInvoiceWithDetails(invoice.id);
+      if (details) results.push(details);
+    }
+    return results;
+  }
+
+  async createInvoice(invoice: InsertInvoice): Promise<Invoice> {
+    const [newInvoice] = await db.insert(invoices).values(invoice).returning();
+    return newInvoice;
+  }
+
+  async updateInvoice(id: string, updates: Partial<InsertInvoice>): Promise<Invoice | undefined> {
+    const [updated] = await db
+      .update(invoices)
+      .set({ ...updates, updatedAt: new Date() })
+      .where(eq(invoices.id, id))
+      .returning();
+    return updated;
+  }
+
+  async generateInvoiceNumber(): Promise<string> {
+    const now = new Date();
+    const year = now.getFullYear().toString().slice(-2);
+    const month = (now.getMonth() + 1).toString().padStart(2, '0');
+    const yearMonth = `${year}${month}`;
+    
+    const [existing] = await db
+      .select()
+      .from(invoiceSequence)
+      .where(eq(invoiceSequence.yearMonth, yearMonth));
+    
+    let sequence: number;
+    if (existing) {
+      sequence = existing.lastSequence + 1;
+      await db
+        .update(invoiceSequence)
+        .set({ lastSequence: sequence })
+        .where(eq(invoiceSequence.yearMonth, yearMonth));
+    } else {
+      sequence = 1;
+      await db.insert(invoiceSequence).values({ yearMonth, lastSequence: 1 });
+    }
+    
+    const sequenceStr = sequence.toString().padStart(2, '0');
+    return `INV${yearMonth}${sequenceStr}`;
+  }
+
+  // Invoice Line Item operations
+  async getInvoiceLineItems(invoiceId: string): Promise<InvoiceLineItem[]> {
+    return db.select().from(invoiceLineItems).where(eq(invoiceLineItems.invoiceId, invoiceId));
+  }
+
+  async createInvoiceLineItem(lineItem: InsertInvoiceLineItem): Promise<InvoiceLineItem> {
+    const [newItem] = await db.insert(invoiceLineItems).values(lineItem).returning();
+    return newItem;
+  }
+
+  async deleteInvoiceLineItems(invoiceId: string): Promise<boolean> {
+    await db.delete(invoiceLineItems).where(eq(invoiceLineItems.invoiceId, invoiceId));
+    return true;
+  }
+
+  // Invoice Payment operations
+  async getInvoicePayment(id: string): Promise<InvoicePayment | undefined> {
+    const [payment] = await db.select().from(invoicePayments).where(eq(invoicePayments.id, id));
+    return payment;
+  }
+
+  async getInvoicePayments(invoiceId: string): Promise<InvoicePayment[]> {
+    return db
+      .select()
+      .from(invoicePayments)
+      .where(eq(invoicePayments.invoiceId, invoiceId))
+      .orderBy(desc(invoicePayments.createdAt));
+  }
+
+  async getPendingPayments(): Promise<InvoicePayment[]> {
+    return db
+      .select()
+      .from(invoicePayments)
+      .where(eq(invoicePayments.verificationStatus, "pending"))
+      .orderBy(desc(invoicePayments.createdAt));
+  }
+
+  async createInvoicePayment(payment: InsertInvoicePayment): Promise<InvoicePayment> {
+    const [newPayment] = await db.insert(invoicePayments).values(payment).returning();
+    return newPayment;
+  }
+
+  async updatePaymentVerification(
+    id: string, 
+    status: PaymentVerificationStatus, 
+    verifiedById: string, 
+    rejectionReason?: string
+  ): Promise<InvoicePayment | undefined> {
+    const [updated] = await db
+      .update(invoicePayments)
+      .set({ 
+        verificationStatus: status, 
+        verifiedById, 
+        verifiedAt: new Date(),
+        rejectionReason: rejectionReason || null
+      })
+      .where(eq(invoicePayments.id, id))
+      .returning();
+    return updated;
+  }
+
+  // Wallet Transaction operations
+  async getWalletTransactions(walletId: string): Promise<WalletTransaction[]> {
+    return db
+      .select()
+      .from(walletTransactions)
+      .where(eq(walletTransactions.walletId, walletId))
+      .orderBy(desc(walletTransactions.createdAt));
+  }
+
+  async createWalletTransaction(transaction: InsertWalletTransaction): Promise<WalletTransaction> {
+    const [newTransaction] = await db.insert(walletTransactions).values(transaction).returning();
+    return newTransaction;
   }
 }
 

@@ -14,9 +14,12 @@ import {
   insertTutorAvailabilitySchema,
   insertSessionProposalSchema,
   insertHourWalletSchema,
+  insertInvoiceSchema,
+  insertInvoiceLineItemSchema,
   type UserRole,
   type ProposalStatus,
   type TutoringSessionStatus,
+  type InvoiceStatus,
 } from "@shared/schema";
 import { z } from "zod";
 
@@ -2092,6 +2095,291 @@ export async function registerRoutes(
       }
       console.error("Error creating/updating wallet:", error);
       res.status(500).json({ message: "Failed to update wallet" });
+    }
+  });
+
+  // ==========================================
+  // INVOICE ROUTES
+  // ==========================================
+
+  // Create invoice schema for validation
+  const createInvoiceRequestSchema = z.object({
+    parentId: z.string().min(1),
+    studentId: z.string().min(1),
+    billingPeriodStart: z.string().datetime(),
+    billingPeriodEnd: z.string().datetime(),
+    currency: z.enum(["ZAR", "USD", "GBP"]).default("ZAR"),
+    dueDate: z.string().datetime().optional(),
+    notes: z.string().optional(),
+    lineItems: z.array(z.object({
+      courseId: z.string().min(1),
+      description: z.string().min(1),
+      hours: z.string(),
+      hourlyRate: z.string(),
+      amount: z.string(),
+      minutesToAdd: z.number().int().default(0),
+    })).min(1),
+  });
+
+  // Get all invoices (admin/manager see all, parents see their own)
+  app.get('/api/invoices', isAuthenticated, requireRole("admin", "manager", "parent"), async (req: Request, res: Response) => {
+    try {
+      const dbUser = (req as any).dbUser;
+      const status = req.query.status as InvoiceStatus | undefined;
+      
+      if (dbUser.role === "parent") {
+        const invoices = await storage.getInvoicesByParent(dbUser.id);
+        res.json(invoices);
+      } else {
+        const invoices = await storage.getAllInvoices(status);
+        res.json(invoices);
+      }
+    } catch (error) {
+      console.error("Error fetching invoices:", error);
+      res.status(500).json({ message: "Failed to fetch invoices" });
+    }
+  });
+
+  // Get single invoice with details
+  app.get('/api/invoices/:id', isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const userId = req.user?.claims?.sub;
+      if (!userId) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+      
+      const user = await storage.getUser(userId);
+      if (!user) {
+        return res.status(401).json({ message: "User not found" });
+      }
+      
+      // Only admin, manager, parent, or student can access invoices
+      const allowedRoles = ["admin", "manager", "parent", "student"];
+      if (!allowedRoles.includes(user.role)) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+      
+      const invoice = await storage.getInvoiceWithDetails(req.params.id);
+      if (!invoice) {
+        return res.status(404).json({ message: "Invoice not found" });
+      }
+      
+      // Parents can only view their own invoices
+      if (user.role === "parent" && invoice.parentId !== userId) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+      
+      // Students can view invoices for them
+      if (user.role === "student" && invoice.studentId !== userId) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+      
+      res.json(invoice);
+    } catch (error) {
+      console.error("Error fetching invoice:", error);
+      res.status(500).json({ message: "Failed to fetch invoice" });
+    }
+  });
+
+  // Create invoice with line items (admin/manager only)
+  app.post('/api/invoices', isAuthenticated, requireRole("admin", "manager"), async (req: Request, res: Response) => {
+    try {
+      const validated = createInvoiceRequestSchema.parse(req.body);
+      
+      // Generate invoice number
+      const invoiceNumber = await storage.generateInvoiceNumber();
+      
+      // Calculate totals
+      const subtotal = validated.lineItems.reduce((sum, item) => 
+        sum + parseFloat(item.amount), 0
+      );
+      
+      // Create the invoice
+      const invoiceData = {
+        invoiceNumber,
+        parentId: validated.parentId,
+        studentId: validated.studentId,
+        billingPeriodStart: new Date(validated.billingPeriodStart),
+        billingPeriodEnd: new Date(validated.billingPeriodEnd),
+        currency: validated.currency,
+        subtotal: subtotal.toFixed(2),
+        taxAmount: "0.00",
+        totalAmount: subtotal.toFixed(2),
+        amountPaid: "0.00",
+        amountOutstanding: subtotal.toFixed(2),
+        status: "draft" as InvoiceStatus,
+        dueDate: validated.dueDate ? new Date(validated.dueDate) : null,
+        notes: validated.notes || null,
+      };
+      
+      const invoice = await storage.createInvoice(invoiceData);
+      
+      // Create line items
+      for (const item of validated.lineItems) {
+        await storage.createInvoiceLineItem({
+          invoiceId: invoice.id,
+          courseId: item.courseId,
+          description: item.description,
+          hours: item.hours,
+          hourlyRate: item.hourlyRate,
+          amount: item.amount,
+          minutesToAdd: item.minutesToAdd,
+        });
+      }
+      
+      // Return invoice with details
+      const invoiceWithDetails = await storage.getInvoiceWithDetails(invoice.id);
+      res.status(201).json(invoiceWithDetails);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Invalid data", errors: error.errors });
+      }
+      console.error("Error creating invoice:", error);
+      res.status(500).json({ message: "Failed to create invoice" });
+    }
+  });
+
+  // Update invoice (admin/manager only, draft invoices only)
+  app.patch('/api/invoices/:id', isAuthenticated, requireRole("admin", "manager"), async (req: Request, res: Response) => {
+    try {
+      const invoice = await storage.getInvoice(req.params.id);
+      if (!invoice) {
+        return res.status(404).json({ message: "Invoice not found" });
+      }
+      
+      // Only draft invoices can be updated (except for status changes)
+      if (invoice.status !== "draft" && !req.body.status) {
+        return res.status(400).json({ message: "Only draft invoices can be updated" });
+      }
+      
+      const updateSchema = z.object({
+        dueDate: z.string().datetime().optional(),
+        notes: z.string().optional(),
+        status: z.enum(["draft", "awaiting_payment", "paid", "overdue", "disputed", "verified"]).optional(),
+      });
+      
+      const validated = updateSchema.parse(req.body);
+      
+      const updates: any = {};
+      if (validated.dueDate) updates.dueDate = new Date(validated.dueDate);
+      if (validated.notes !== undefined) updates.notes = validated.notes;
+      if (validated.status) updates.status = validated.status;
+      
+      const updated = await storage.updateInvoice(req.params.id, updates);
+      res.json(updated);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Invalid data", errors: error.errors });
+      }
+      console.error("Error updating invoice:", error);
+      res.status(500).json({ message: "Failed to update invoice" });
+    }
+  });
+
+  // Send invoice (mark as awaiting_payment)
+  app.post('/api/invoices/:id/send', isAuthenticated, requireRole("admin", "manager"), async (req: Request, res: Response) => {
+    try {
+      const invoice = await storage.getInvoice(req.params.id);
+      if (!invoice) {
+        return res.status(404).json({ message: "Invoice not found" });
+      }
+      
+      if (invoice.status !== "draft") {
+        return res.status(400).json({ message: "Only draft invoices can be sent" });
+      }
+      
+      // Set due date if not already set (default: 14 days from now)
+      const dueDate = invoice.dueDate || new Date(Date.now() + 14 * 24 * 60 * 60 * 1000);
+      
+      const updated = await storage.updateInvoice(req.params.id, {
+        status: "awaiting_payment",
+        dueDate,
+      });
+      
+      // Create notification for parent
+      try {
+        await storage.createNotification({
+          userId: invoice.parentId,
+          type: "system" as any,
+          title: "New Invoice",
+          message: `Invoice ${invoice.invoiceNumber} has been issued. Amount: ${invoice.currency} ${invoice.totalAmount}`,
+          link: `/invoices/${invoice.id}`,
+          isRead: false,
+          relatedId: invoice.id,
+        });
+      } catch (notifError) {
+        console.error("Error creating invoice notification:", notifError);
+      }
+      
+      const invoiceWithDetails = await storage.getInvoiceWithDetails(req.params.id);
+      res.json(invoiceWithDetails);
+    } catch (error) {
+      console.error("Error sending invoice:", error);
+      res.status(500).json({ message: "Failed to send invoice" });
+    }
+  });
+
+  // Get invoices for a specific student (admin/manager/parent)
+  app.get('/api/invoices/student/:studentId', isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const userId = req.user?.claims?.sub;
+      if (!userId) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+      
+      const user = await storage.getUser(userId);
+      if (!user) {
+        return res.status(401).json({ message: "User not found" });
+      }
+      
+      // Only admin/manager can view any student's invoices
+      // Parents can only view invoices for their linked children
+      if (user.role === "parent") {
+        const children = await storage.getParentChildren(userId);
+        const childIds = children.map(c => c.childId);
+        if (!childIds.includes(req.params.studentId)) {
+          return res.status(403).json({ message: "Access denied" });
+        }
+      } else if (user.role !== "admin" && user.role !== "manager") {
+        return res.status(403).json({ message: "Access denied" });
+      }
+      
+      const invoices = await storage.getInvoicesByStudent(req.params.studentId);
+      res.json(invoices);
+    } catch (error) {
+      console.error("Error fetching student invoices:", error);
+      res.status(500).json({ message: "Failed to fetch invoices" });
+    }
+  });
+
+  // Get line items for an invoice
+  app.get('/api/invoices/:id/line-items', isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const userId = req.user?.claims?.sub;
+      if (!userId) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+      
+      const invoice = await storage.getInvoice(req.params.id);
+      if (!invoice) {
+        return res.status(404).json({ message: "Invoice not found" });
+      }
+      
+      const user = await storage.getUser(userId);
+      if (!user) {
+        return res.status(401).json({ message: "User not found" });
+      }
+      
+      // Access check
+      if (user.role === "parent" && invoice.parentId !== userId) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+      
+      const lineItems = await storage.getInvoiceLineItems(req.params.id);
+      res.json(lineItems);
+    } catch (error) {
+      console.error("Error fetching invoice line items:", error);
+      res.status(500).json({ message: "Failed to fetch line items" });
     }
   });
 
