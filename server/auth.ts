@@ -50,6 +50,13 @@ export async function setupAuth(app: Express) {
         return res.status(401).json({ message: "Invalid email or password" });
       }
 
+      // Only students and parents may use this login route
+      if (user.role !== "student" && user.role !== "parent") {
+        return res.status(403).json({
+          message: "Please use the staff login portal"
+        });
+      }
+
       if (!user.passwordHash) {
         return res.status(401).json({ message: "Password not set. Please use password reset." });
       }
@@ -112,8 +119,14 @@ export async function setupAuth(app: Express) {
         return res.status(400).json({ message: "Email already registered" });
       }
 
-      const allowedRoles = ["student", "parent"];
-      const userRole = allowedRoles.includes(role) ? role : "student";
+      // Only students and parents may self-signup
+      if (role !== "student" && role !== "parent") {
+        return res.status(403).json({
+          message: "Only students and parents may sign up here"
+        });
+      }
+
+      const userRole = role;
 
       const passwordHash = await bcrypt.hash(password, 10);
       
@@ -315,4 +328,36 @@ export const isAuthenticated: RequestHandler = async (req: Request, res: Respons
   (req as any).dbUser = user;
   
   next();
+};
+
+export const requireRole = (roles: Array<string>): RequestHandler => {
+  return (req: Request, res: Response, next: NextFunction) => {
+    const user = (req as any).dbUser;
+
+    if (!user) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+
+    if (!roles.includes(user.role)) {
+      return res.status(403).json({ message: "Forbidden" });
+    }
+
+    next();
+  };
+};
+
+export const requireAdminLevel = (minLevel: number): RequestHandler => {
+  return (req: Request, res: Response, next: NextFunction) => {
+    const user = (req as any).dbUser;
+
+    if (!user || user.role !== "admin") {
+      return res.status(403).json({ message: "Admin access required" });
+    }
+
+    if ((user.adminLevel || 0) < minLevel) {
+      return res.status(403).json({ message: "Insufficient admin level" });
+    }
+
+    next();
+  };
 };
