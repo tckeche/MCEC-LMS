@@ -1,0 +1,56 @@
+FOCUS ONLY ON HOURS WALLET FUNCTIONALITY. THIS IS THE CORE MONEY LOGIC.
+
+Do not add new features. Do not change scheduling logic. Do not change finance logic except where it directly affects wallet top ups. Do not redesign UI.
+
+Goal
+Admin can add purchased hours to a student for a specific course, and tutorials deduct those hours correctly and exactly once.
+
+Step 1. Identify the single source of truth for hours
+Confirm which table and fields represent:
+studentId
+courseId
+purchasedMinutes or purchasedHours
+consumedMinutes
+remainingMinutes (either stored or computed)
+If more than one source exists, stop and consolidate so there is only one truth.
+
+Step 2. Fix Admin Add Hours
+There must be a working admin action and endpoint that:
+takes studentId, courseId, minutes to add
+creates wallet row if missing
+otherwise increments purchasedMinutes
+does not overwrite existing values
+creates a wallet transaction or audit log record
+returns updated wallet state
+
+Step 3. Fix Deduction Logic
+Deduction must happen exactly once per session per student.
+Pick ONE of these approaches and enforce it consistently:
+A. Deduct at session end only, using billableMinutes
+OR
+B. Deduct at join, but then end must never deduct again
+
+Hard requirements
+1. Remaining minutes must never go negative
+2. Round billable minutes up to nearest 15 minute block consistently
+3. For group sessions, apply deduction per student individually
+4. For missed sessions under 120 minutes, deduct 50 percent of scheduled duration
+5. For overruns, record actual duration but bill only scheduled duration
+
+Step 4. Update dashboards to use the wallet and attendance logs
+Tutor hours taught must be derived from attendance logs
+Student donut charts must be derived from wallet purchased and consumed values
+No separate counters
+
+Verification, must be executed and reported
+Using existing real accounts and data, run these exact tests and report the actual before and after numbers:
+Test 1. Add 120 minutes to Student A Course X, show wallet before and after
+Test 2. Complete a 60 minute session, show wallet before and after, and attendance log billableMinutes
+Test 3. Mark a missed session, show wallet deduction equals 50 percent of scheduled duration
+Test 4. Complete a group session with 3 students, show each student wallet decreased
+
+Deliverables
+1. File list changed
+2. Endpoints involved and example request and response payloads
+3. Proof of the four tests with numeric values
+Stop after this is correct. Do not continue to other modules.

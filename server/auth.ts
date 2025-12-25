@@ -346,18 +346,29 @@ export const requireRole = (roles: Array<string>): RequestHandler => {
   };
 };
 
-export const requireAdminLevel = (minLevel: number): RequestHandler => {
+export const requireAdminLevel = (minLevel: number) => {
   return (req: Request, res: Response, next: NextFunction) => {
     const user = (req as any).dbUser;
 
-    if (!user || user.role !== "admin") {
+    if (!user) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+
+    if (user.isSuperAdmin) {
+      return next();
+    }
+
+    if (user.role !== "admin" && user.role !== "manager") {
       return res.status(403).json({ message: "Admin access required" });
     }
 
     if ((user.adminLevel || 0) < minLevel) {
-      return res.status(403).json({ message: "Insufficient admin level" });
+      return res.status(403).json({
+        message: `Admin level ${minLevel}+ required`,
+      });
     }
 
     next();
   };
 };
+

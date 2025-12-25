@@ -2,7 +2,12 @@
 import type { Express, Request, Response, NextFunction } from "express";
 import type { Server } from "http";
 import { storage } from "./storage";
-import { setupAuth, isAuthenticated } from "./auth";
+import {
+  setupAuth,
+  isAuthenticated,
+  requireAdminLevel
+} from "./auth";
+
 import { setupDevAuth } from "./devAuth";
 import {
   insertCourseSchema,
@@ -28,6 +33,75 @@ import {
 } from "@shared/schema";
 import { z } from "zod";
 import PDFDocument from "pdfkit";
+
+function isStaffWithAccess(user: any) {
+  return (
+    user?.isSuperAdmin === true ||
+    user?.role === "admin" ||
+    user?.role === "manager"
+  );
+}
+
+// Round minutes up to nearest 15-minute block for consistent billing
+function roundUpTo15Minutes(minutes: number): number {
+  return Math.ceil(minutes / 15) * 15;
+}
+
+// Helper to deduct from wallet with audit logging
+async function deductWalletWithAudit(
+  studentId: string, 
+  courseId: string, 
+  minutes: number, 
+  reason: string,
+  sessionId?: string
+): Promise<void> {
+  const wallet = await storage.getHourWalletByStudentCourse(studentId, courseId);
+  if (!wallet) return;
+  
+  await storage.deductMinutesFromWallet(studentId, courseId, minutes);
+  
+  // Refetch to get updated balance
+  const updatedWallet = await storage.getHourWalletByStudentCourse(studentId, courseId);
+  if (updatedWallet) {
+    const remainingMinutes = updatedWallet.purchasedMinutes - updatedWallet.consumedMinutes;
+    await storage.createWalletTransaction({
+      walletId: updatedWallet.id,
+      minutesDelta: -minutes,
+      balanceAfter: remainingMinutes,
+      reason: reason,
+      performedById: null,
+    });
+  }
+}
+
+// Helper to refund to wallet with audit logging
+async function refundWalletWithAudit(
+  studentId: string, 
+  courseId: string, 
+  minutes: number, 
+  reason: string
+): Promise<void> {
+  const wallet = await storage.getHourWalletByStudentCourse(studentId, courseId);
+  if (!wallet) return;
+  
+  // Refund works by reducing consumedMinutes
+  const newConsumed = Math.max(0, wallet.consumedMinutes - minutes);
+  await storage.updateHourWallet(wallet.id, { consumedMinutes: newConsumed });
+  
+  const remainingMinutes = wallet.purchasedMinutes - newConsumed;
+  await storage.createWalletTransaction({
+    walletId: wallet.id,
+    minutesDelta: minutes, // Positive delta for refund
+    balanceAfter: remainingMinutes,
+    reason: `[REFUND] ${reason}`,
+    performedById: null,
+  });
+}
+
+function getDbUser(req: Request) {
+  return (req as any).dbUser;
+}
+
 
 // Extend Express Request to include dbUser from session auth
 declare global {
@@ -1600,7 +1674,7 @@ export async function registerRoutes(
   });
 
   // Admin dashboard
-  app.get('/api/admin/dashboard', isAuthenticated, requireRole("admin"), async (req: Request, res: Response) => {
+  app.get('/api/admin/dashboard', isAuthenticated, requireRole("[admin]"), requireAdminLevel(1), async (req: Request, res: Response) => {
     try {
       const allUsers = await storage.getAllUsers();
       const allCourses = await storage.getAllCourses();
@@ -2281,8 +2355,11 @@ export async function registerRoutes(
         return res.status(404).json({ message: "User not found" });
       }
       
-      if (session.tutorId !== userId && session.studentId !== userId && 
-          user.role !== "admin" && user.role !== "manager") {
+      if (
+        session.tutorId !== userId &&
+        session.studentId !== userId &&
+        !isStaffWithAccess(user)
+      ) {
         return res.status(403).json({ message: "Access denied" });
       }
       
@@ -2324,9 +2401,10 @@ export async function registerRoutes(
       const updates: any = {};
 
       if (isStudent && !isTutor) {
-        // Calculate scheduled minutes if not already set
-        const scheduledMinutes = session.scheduledMinutes || 
+        // Calculate scheduled minutes if not already set, rounded to 15-minute blocks
+        const rawScheduledMinutes = session.scheduledMinutes || 
           Math.ceil((new Date(session.scheduledEndTime).getTime() - new Date(session.scheduledStartTime).getTime()) / (1000 * 60));
+        const scheduledMinutes = roundUpTo15Minutes(rawScheduledMinutes);
         
         if (session.isGroupSession) {
           // For group sessions, check if already joined via attendance record
@@ -2351,8 +2429,13 @@ export async function registerRoutes(
             });
           }
           
-          // RESERVE scheduled minutes from wallet at join time
-          await storage.deductMinutesFromWallet(userId, session.courseId, scheduledMinutes);
+          // RESERVE scheduled minutes from wallet at join time with audit logging
+          await deductWalletWithAudit(
+            userId, 
+            session.courseId, 
+            scheduledMinutes, 
+            `Session join: reserved ${scheduledMinutes} min for session ${session.id}`
+          );
           
           await storage.updateSessionAttendance(attendance.id, {
             joinTime: now,
@@ -2376,8 +2459,13 @@ export async function registerRoutes(
             });
           }
           
-          // RESERVE scheduled minutes from wallet at join time (not at end)
-          await storage.deductMinutesFromWallet(userId, session.courseId, scheduledMinutes);
+          // RESERVE scheduled minutes from wallet at join time with audit logging
+          await deductWalletWithAudit(
+            userId, 
+            session.courseId, 
+            scheduledMinutes, 
+            `Session join: reserved ${scheduledMinutes} min for session ${session.id}`
+          );
           
           updates.studentJoinTime = now;
           updates.reservedMinutes = scheduledMinutes;
@@ -2532,27 +2620,71 @@ export async function registerRoutes(
       const scheduledStart = new Date(session.scheduledStartTime);
       const minutesUntilStart = (scheduledStart.getTime() - now.getTime()) / (1000 * 60);
       
-      // Calculate scheduled minutes for charging
-      const scheduledMinutes = session.scheduledMinutes || 
+      // Calculate scheduled minutes for charging, rounded to 15-minute blocks
+      const rawScheduledMinutes = session.scheduledMinutes || 
         Math.ceil((new Date(session.scheduledEndTime).getTime() - scheduledStart.getTime()) / (1000 * 60));
+      const scheduledMinutes = roundUpTo15Minutes(rawScheduledMinutes);
 
       // If less than 120 minutes before start, mark as missed with 50% charge
       if (minutesUntilStart < 120) {
-        const missedChargeMinutes = Math.ceil(scheduledMinutes * 0.5);
+        // For missed sessions <120 min, charge 50% of scheduled duration
+        const missedChargeMinutes = roundUpTo15Minutes(Math.ceil(scheduledMinutes * 0.5));
         
         if (session.isGroupSession) {
-          // For group sessions, charge each registered student 50%
+          // For group sessions, handle each registered student
           const attendees = await storage.getSessionAttendance(session.id);
           for (const attendee of attendees) {
-            await storage.deductMinutesFromWallet(attendee.studentId, session.courseId, missedChargeMinutes);
-            await storage.updateSessionAttendance(attendee.id, {
-              attended: false,
-              consumedMinutes: missedChargeMinutes,
-            });
+            if (attendee.reservedMinutes && attendee.reservedMinutes > 0) {
+              // Student already joined and was charged full amount - issue refund to adjust to 50%
+              const refundAmount = attendee.reservedMinutes - missedChargeMinutes;
+              if (refundAmount > 0) {
+                await refundWalletWithAudit(
+                  attendee.studentId, 
+                  session.courseId, 
+                  refundAmount, 
+                  `Late postpone refund: adjusting from ${attendee.reservedMinutes} to ${missedChargeMinutes} min (50%) for session ${session.id}`
+                );
+              }
+              await storage.updateSessionAttendance(attendee.id, {
+                attended: false,
+                consumedMinutes: missedChargeMinutes,
+              });
+            } else {
+              // Student never joined - charge 50% for missed session
+              await deductWalletWithAudit(
+                attendee.studentId, 
+                session.courseId, 
+                missedChargeMinutes, 
+                `Missed session: 50% charge (${missedChargeMinutes} min) for session ${session.id}`
+              );
+              await storage.updateSessionAttendance(attendee.id, {
+                attended: false,
+                consumedMinutes: missedChargeMinutes,
+              });
+            }
           }
         } else if (session.studentId) {
-          // For 1:1 sessions, charge the student 50%
-          await storage.deductMinutesFromWallet(session.studentId, session.courseId, missedChargeMinutes);
+          // For 1:1 sessions, check if student already joined (reservedMinutes > 0)
+          if (session.reservedMinutes && session.reservedMinutes > 0) {
+            // Student already joined and was charged full amount - issue refund to adjust to 50%
+            const refundAmount = session.reservedMinutes - missedChargeMinutes;
+            if (refundAmount > 0) {
+              await refundWalletWithAudit(
+                session.studentId, 
+                session.courseId, 
+                refundAmount, 
+                `Late postpone refund: adjusting from ${session.reservedMinutes} to ${missedChargeMinutes} min (50%) for session ${session.id}`
+              );
+            }
+          } else {
+            // Student never joined - charge 50% for missed session
+            await deductWalletWithAudit(
+              session.studentId, 
+              session.courseId, 
+              missedChargeMinutes, 
+              `Missed session: 50% charge (${missedChargeMinutes} min) for session ${session.id}`
+            );
+          }
         }
         
         const updatedSession = await storage.updateTutoringSession(req.params.id, {
@@ -2698,19 +2830,22 @@ export async function registerRoutes(
   // Create or add hours to wallet (manager/admin)
   app.post('/api/hour-wallets', isAuthenticated, requireRole("manager", "admin"), async (req: Request, res: Response) => {
     try {
-      const { studentId, courseId, minutes } = req.body;
+      const { studentId, courseId, minutes, reason } = req.body;
+      const performedById = req.user?.claims?.sub;
       
       if (!studentId || !courseId || !minutes || minutes <= 0) {
         return res.status(400).json({ message: "Invalid data: studentId, courseId, and positive minutes required" });
       }
 
+      let wallet;
+      let isNew = false;
+      
       // Check if wallet exists
       const existingWallet = await storage.getHourWalletByStudentCourse(studentId, courseId);
       
       if (existingWallet) {
-        // Add to existing wallet
-        const updated = await storage.addMinutesToWallet(studentId, courseId, minutes);
-        res.json(updated);
+        // Add to existing wallet (increments purchasedMinutes, does not overwrite)
+        wallet = await storage.addMinutesToWallet(studentId, courseId, minutes);
       } else {
         // Create new wallet
         const validated = insertHourWalletSchema.parse({
@@ -2719,9 +2854,23 @@ export async function registerRoutes(
           purchasedMinutes: minutes,
           consumedMinutes: 0,
         });
-        const wallet = await storage.createHourWallet(validated);
-        res.status(201).json(wallet);
+        wallet = await storage.createHourWallet(validated);
+        isNew = true;
       }
+      
+      // Create wallet transaction audit log
+      if (wallet) {
+        const remainingMinutes = wallet.purchasedMinutes - wallet.consumedMinutes;
+        await storage.createWalletTransaction({
+          walletId: wallet.id,
+          minutesDelta: minutes,
+          balanceAfter: remainingMinutes,
+          reason: reason || `Admin added ${minutes} minutes`,
+          performedById: performedById || null,
+        });
+      }
+      
+      res.status(isNew ? 201 : 200).json(wallet);
     } catch (error) {
       if (error instanceof z.ZodError) {
         return res.status(400).json({ message: "Invalid data", errors: error.errors });
