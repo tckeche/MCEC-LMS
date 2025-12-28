@@ -1,0 +1,61 @@
+Fix the Hours Wallet “Add Hours” student dropdown so it shows all active students in the business, and ensure hours can be added by Admin, Manager, and Tutor (with proper limits). Do not change scheduling logic or finance logic.
+
+Current bug
+On /admin/wallets, the “Add Hours to Student Wallet” modal has an empty Student dropdown even though student accounts exist across the app. This is blocking wallet creation and hours top ups.
+
+Root requirement
+The Student dropdown must be a searchable list of ALL active students in the system, not only enrolled students, not only students with wallets, and not only tutor scoped students.
+
+Step 1, identify the current data source
+Find the frontend component for the modal on /admin/wallets (or wherever the Add Hours dialog is implemented). Locate the exact API call used to populate the Student dropdown. Confirm with a console log or network request inspection what endpoint is called and what it returns.
+
+Step 2, implement a correct backend endpoint (or fix the existing one)
+Create a single source of truth endpoint that returns all active students.
+
+Backend acceptance for the endpoint
+1. Route name: GET /api/students/active
+2. Returns: [{ id, fullName, email, phone }] minimal fields only
+3. Filtering: role = "student" AND account is active (use the same active definition used by the rest of the app where students show up elsewhere)
+4. Permissions:
+   a. Admin and Manager can call this endpoint and see all active students
+   b. Tutor can call this endpoint but must only receive students that are linked to that tutor via enrollments OR sessions OR courses where they are primary or co tutor (choose the best existing relation in your database, but implement at least one correct restriction, do not return the entire student list to any tutor)
+5. If the system has no students, return [] with 200, do not throw
+
+If an endpoint already exists that should do this, then fix its query so it actually matches how student records are stored, and keep the route stable.
+
+Step 3, wire the frontend dropdown to this endpoint
+Update the Add Hours modal so it fetches students from GET /api/students/active, shows a loading state, and renders a searchable dropdown.
+1. The dropdown must show students even if they have zero enrollments and zero existing wallets
+2. If the API returns students but none render, fix the mapping bug
+3. If the API returns empty, fix the backend query until it returns the same students visible in other parts of the app
+
+Step 4, ensure “Add Hours” actually creates or updates the wallet
+When the user submits Add Hours:
+1. If a wallet record for (studentId, courseId) does not exist, create it
+2. Add minutes to purchased minutes (or the correct purchased field in your schema)
+3. Create a wallet transaction row for audit with: actorUserId, studentId, courseId, minutesDelta, reason, createdAt
+4. Return a success response that the UI uses to close the modal and refresh the wallets list
+5. If minutes to add is invalid (<= 0), block with a clear error
+
+Step 5, role permissions for adding hours
+Implement permission rules for the Add Hours action endpoint (whatever POST route is used):
+1. Admin and Manager: can add hours to any student for any course
+2. Tutor: can only add hours for students in courses where the tutor is primary or co tutor, and only for those courses
+If the current RBAC is different, adjust only this feature’s guard, do not refactor the entire auth system.
+
+Step 6, prove it is fixed with explicit tests
+I want you to verify this end to end with real UI clicks, not just a claim.
+
+Acceptance test checklist
+1. Log in as Admin, go to /admin/wallets, open Add Hours, student dropdown shows the full student list, searchable
+2. Pick a student who is not enrolled in the selected course, add minutes, submit, wallet is created and visible in All Wallets
+3. Pick the same student again, add more minutes, submit, wallet increments correctly
+4. Confirm the transaction row is created for both actions
+5. Log in as Tutor, open the tutor allowed hours add UI (or the same modal if exposed), tutor can only see their linked students, not all students
+6. No changes to scheduling or invoice or payroll logic
+
+Output required from you
+1. Tell me the exact frontend file and function you changed for the student dropdown
+2. Tell me the exact backend route and query used for GET /api/students/active
+3. Tell me the exact backend route used for Add Hours submit and how wallet creation is handled
+4. Confirm the above acceptance tests were executed successfully, with any edge cases found and fixed

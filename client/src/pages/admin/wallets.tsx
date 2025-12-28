@@ -52,6 +52,13 @@ type WalletWithDetails = HourWallet & {
   course?: Course;
 };
 
+type ActiveStudent = {
+  id: string;
+  fullName: string;
+  email: string;
+  phone: string | null;
+};
+
 const addHoursSchema = z.object({
   studentId: z.string().min(1, "Please select a student"),
   courseId: z.string().min(1, "Please select a course"),
@@ -63,6 +70,7 @@ type AddHoursFormData = z.infer<typeof addHoursSchema>;
 
 export default function AdminWallets() {
   const [searchQuery, setSearchQuery] = useState("");
+  const [studentSearchQuery, setStudentSearchQuery] = useState("");
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const { toast } = useToast();
 
@@ -70,14 +78,21 @@ export default function AdminWallets() {
     queryKey: ["/api/hour-wallets"],
   });
 
-  const { data: students } = useQuery<UserType[]>({
-    queryKey: ["/api/admin/users"],
-    select: (users) => users?.filter(u => u.role === "student") || [],
+  const { data: students, isLoading: studentsLoading } = useQuery<ActiveStudent[]>({
+    queryKey: ["/api/students/active"],
   });
 
   const { data: courses } = useQuery<Course[]>({
     queryKey: ["/api/courses"],
   });
+
+  // Filter students by search query
+  const filteredStudents = students?.filter(student => {
+    if (!studentSearchQuery) return true;
+    const searchLower = studentSearchQuery.toLowerCase();
+    return student.fullName.toLowerCase().includes(searchLower) ||
+           student.email.toLowerCase().includes(searchLower);
+  }) || [];
 
   const form = useForm<AddHoursFormData>({
     resolver: zodResolver(addHoursSchema),
@@ -140,7 +155,12 @@ export default function AdminWallets() {
           <h1 className="text-2xl font-bold" data-testid="text-page-title">Hours Wallets</h1>
           <p className="text-muted-foreground">Manage student tutoring hours</p>
         </div>
-        <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+        <Dialog open={isDialogOpen} onOpenChange={(open) => {
+          setIsDialogOpen(open);
+          if (!open) {
+            setStudentSearchQuery("");
+          }
+        }}>
           <DialogTrigger asChild>
             <Button data-testid="button-add-hours">
               <Plus className="mr-2 h-4 w-4" />
@@ -165,15 +185,30 @@ export default function AdminWallets() {
                       <Select onValueChange={field.onChange} value={field.value}>
                         <FormControl>
                           <SelectTrigger data-testid="select-student">
-                            <SelectValue placeholder="Select a student" />
+                            <SelectValue placeholder={studentsLoading ? "Loading students..." : "Select a student"} />
                           </SelectTrigger>
                         </FormControl>
                         <SelectContent>
-                          {students?.map((student) => (
-                            <SelectItem key={student.id} value={student.id}>
-                              {student.firstName} {student.lastName}
-                            </SelectItem>
-                          ))}
+                          <div className="px-2 pb-2">
+                            <Input
+                              placeholder="Search students..."
+                              value={studentSearchQuery}
+                              onChange={(e) => setStudentSearchQuery(e.target.value)}
+                              className="h-8"
+                              data-testid="input-student-search"
+                            />
+                          </div>
+                          {filteredStudents.length === 0 ? (
+                            <div className="py-6 text-center text-sm text-muted-foreground">
+                              {studentsLoading ? "Loading..." : "No students found"}
+                            </div>
+                          ) : (
+                            filteredStudents.map((student) => (
+                              <SelectItem key={student.id} value={student.id}>
+                                {student.fullName}
+                              </SelectItem>
+                            ))
+                          )}
                         </SelectContent>
                       </Select>
                       <FormMessage />

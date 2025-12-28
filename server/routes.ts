@@ -772,10 +772,47 @@ export async function registerRoutes(
   // Get active students for tutor enrollment (searchable dropdown)
   app.get('/api/tutor/active-students', isAuthenticated, requireRole("tutor", "admin", "manager"), async (req: Request, res: Response) => {
     try {
-      const students = await storage.getUsersByRole("student");
-      // Filter to only active students
-      const activeStudents = students.filter(s => s.isActive && s.status === "active");
-      res.json(activeStudents);
+      const dbUser = (req as any).dbUser;
+      
+      // For tutors, only return students in their courses
+      if (dbUser.role === "tutor") {
+        const students = await storage.getActiveStudentsByTutor(dbUser.id);
+        return res.json(students);
+      }
+      
+      // Admin/manager see all active students
+      const students = await storage.getActiveStudents();
+      res.json(students);
+    } catch (error) {
+      console.error("Error fetching active students:", error);
+      res.status(500).json({ message: "Failed to fetch students" });
+    }
+  });
+
+  // Get all active students (for wallet management - role-based access)
+  app.get('/api/students/active', isAuthenticated, requireRole("tutor", "admin", "manager"), async (req: Request, res: Response) => {
+    try {
+      const dbUser = (req as any).dbUser;
+      
+      // For tutors, only return students in their courses
+      if (dbUser.role === "tutor") {
+        const students = await storage.getActiveStudentsByTutor(dbUser.id);
+        return res.json(students.map(s => ({
+          id: s.id,
+          fullName: `${s.firstName || ''} ${s.lastName || ''}`.trim() || s.email,
+          email: s.email,
+          phone: s.phone
+        })));
+      }
+      
+      // Admin/manager see all active students
+      const students = await storage.getActiveStudents();
+      res.json(students.map(s => ({
+        id: s.id,
+        fullName: `${s.firstName || ''} ${s.lastName || ''}`.trim() || s.email,
+        email: s.email,
+        phone: s.phone
+      })));
     } catch (error) {
       console.error("Error fetching active students:", error);
       res.status(500).json({ message: "Failed to fetch students" });

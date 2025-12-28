@@ -107,6 +107,8 @@ export interface IStorage {
   // User management
   getAllUsers(): Promise<User[]>;
   getUsersByRole(role: UserRole): Promise<User[]>;
+  getActiveStudents(): Promise<User[]>;
+  getActiveStudentsByTutor(tutorId: string): Promise<User[]>;
   updateUserRole(id: string, role: UserRole): Promise<User | undefined>;
   updateUserStatus(id: string, isActive: boolean): Promise<User | undefined>;
   
@@ -397,6 +399,37 @@ export class DatabaseStorage implements IStorage {
 
   async getUsersByRole(role: UserRole): Promise<User[]> {
     return db.select().from(users).where(eq(users.role, role)).orderBy(desc(users.createdAt));
+  }
+
+  async getActiveStudents(): Promise<User[]> {
+    return db
+      .select()
+      .from(users)
+      .where(and(
+        eq(users.role, "student"),
+        eq(users.isActive, true),
+        eq(users.status, "active")
+      ))
+      .orderBy(users.firstName, users.lastName);
+  }
+
+  async getActiveStudentsByTutor(tutorId: string): Promise<User[]> {
+    // Get all students enrolled in courses where this tutor is the primary tutor
+    const result = await db
+      .selectDistinct({ student: users })
+      .from(users)
+      .innerJoin(enrollments, eq(users.id, enrollments.studentId))
+      .innerJoin(courses, eq(enrollments.courseId, courses.id))
+      .where(and(
+        eq(users.role, "student"),
+        eq(users.isActive, true),
+        eq(users.status, "active"),
+        eq(enrollments.status, "active"),
+        eq(courses.tutorId, tutorId)
+      ))
+      .orderBy(users.firstName, users.lastName);
+    
+    return result.map(r => r.student);
   }
 
   async updateUserRole(id: string, role: UserRole): Promise<User | undefined> {
