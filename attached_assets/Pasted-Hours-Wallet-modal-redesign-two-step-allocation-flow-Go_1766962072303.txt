@@ -1,0 +1,69 @@
+Hours Wallet modal redesign: two step allocation flow
+
+Goal
+Change “Add Hours to Student Wallet” so we first add a monthly hour pool to the student, then distribute that same pool across the student’s enrolled courses. No course dropdown before the pool exists.
+
+UI structure
+Single column layout only.
+
+Step 1: Monthly hours pool
+Fields in order
+1 Student dropdown (required)
+2 Month dropdown (required, default current month)
+3 Rollover summary line (always visible)
+   “Rollover from previous months: X hours (Y minutes)”
+4 Input: “Total hours to add for <Month YYYY>” (required)
+5 Reason optional
+Primary button for Step 1: “Next: Allocate hours”
+
+Behavior Step 1
+When student and month selected, fetch:
+A the student’s enrolled courses list for that month (active enrollments)
+B rollover outstanding hours by course from previous months
+Do not show course allocation until Step 1 is completed.
+On clicking Next, validate totalHours > 0 then move to Step 2 without writing anything yet.
+
+Step 2: Allocate hours per course
+Show header text:
+“Allocate <TotalHours> hours across courses for <Student> in <Month YYYY>”
+Show live remaining badge:
+“Remaining to allocate: R hours”
+
+Render a vertical list of the student’s enrolled courses.
+For each course row show:
+Course name and level
+Input: “Hours for this course” (number, allow decimals like 1.5)
+Optional note or leave blank
+
+Dynamic allocation rules
+Total allocated hours across all course inputs must equal the Step 1 totalHours.
+As user types, update Remaining = totalHours minus sum(allocations).
+Constraints:
+Each course allocation input min 0.
+Each course allocation input max Remaining plus its current value.
+Disable Save until Remaining equals 0 exactly.
+Add helper buttons:
+“Split evenly” fills allocations equally across courses then adjusts rounding to ensure total matches.
+“Clear allocations” sets all to 0.
+
+Save behavior
+On Step 2 Save, create or update wallets for each course for that student and month.
+Write minutes internally.
+Create one transaction per course with the same reason plus suffix “Allocation for <Month YYYY>”.
+Then close modal and refresh wallets table.
+
+Important
+If student has zero enrolled courses, Step 2 must show an empty state:
+“No courses found for this student. Enroll the student first, then allocate hours.”
+And block Save.
+
+Backend and API expectations
+If you already have an endpoint that adds minutes to a wallet, reuse it.
+Otherwise implement a single atomic endpoint:
+POST /api/wallets/allocate-month
+Body:
+{ studentId, month, year, totalMinutes, allocations: [{courseId, minutes}], reason }
+Server validates allocations sum equals totalMinutes.
+
+Do not change scheduling or finance logic.
+Only implement this allocation workflow and UI.

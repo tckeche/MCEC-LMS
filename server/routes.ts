@@ -832,6 +832,82 @@ export async function registerRoutes(
     }
   });
 
+  // Get student's enrolled courses (for allocation modal)
+  app.get('/api/students/:studentId/enrolled-courses', isAuthenticated, requireRole("tutor", "admin", "manager"), async (req: Request, res: Response) => {
+    try {
+      const { studentId } = req.params;
+      
+      // Get all active enrollments for this student
+      const enrollments = await storage.getEnrollmentsByStudent(studentId);
+      
+      // Filter to only active enrollments and return course info
+      const enrolledCourses = enrollments
+        .filter(e => e.status === "active")
+        .map(e => ({
+          courseId: e.courseId,
+          courseName: e.course?.title || "Unknown Course",
+          courseLevel: e.course?.description?.split(" - ")[0] || "",
+          enrolledAt: e.enrolledAt,
+        }));
+      
+      res.json(enrolledCourses);
+    } catch (error) {
+      console.error("Error fetching enrolled courses:", error);
+      res.status(500).json({ message: "Failed to fetch enrolled courses" });
+    }
+  });
+
+  // Allocate monthly hours across courses (atomic operation)
+  app.post('/api/wallets/allocate-month', isAuthenticated, requireRole("tutor", "admin", "manager"), async (req: Request, res: Response) => {
+    try {
+      const { studentId, month, year, totalMinutes, allocations, reason } = req.body;
+      
+      // Validate required fields
+      if (!studentId || !month || !year || !totalMinutes || !allocations) {
+        return res.status(400).json({ message: "Missing required fields" });
+      }
+      
+      // Validate allocations sum equals totalMinutes
+      const allocationSum = allocations.reduce((sum: number, a: { courseId: string; minutes: number }) => sum + a.minutes, 0);
+      if (Math.abs(allocationSum - totalMinutes) > 0.01) {
+        return res.status(400).json({ 
+          message: `Allocations sum (${allocationSum}) does not equal total minutes (${totalMinutes})` 
+        });
+      }
+      
+      // Process each allocation
+      const monthLabel = new Date(year, month - 1).toLocaleString('default', { month: 'long', year: 'numeric' });
+      const transactionReason = reason ? `${reason} - Allocation for ${monthLabel}` : `Allocation for ${monthLabel}`;
+      
+      for (const allocation of allocations) {
+        if (allocation.minutes > 0) {
+          // Add minutes to wallet (creates wallet if doesn't exist)
+          await storage.addMinutesToWallet(studentId, allocation.courseId, allocation.minutes);
+          
+          // Get the wallet to create transaction
+          const wallet = await storage.getHourWalletByStudentCourse(studentId, allocation.courseId);
+          if (wallet) {
+            await storage.createWalletTransaction({
+              walletId: wallet.id,
+              minutes: allocation.minutes,
+              type: "credit",
+              description: transactionReason,
+              performedById: req.user?.claims?.sub || "",
+            });
+          }
+        }
+      }
+      
+      res.json({ 
+        success: true, 
+        message: `Successfully allocated ${totalMinutes} minutes for ${monthLabel}` 
+      });
+    } catch (error) {
+      console.error("Error allocating monthly hours:", error);
+      res.status(500).json({ message: "Failed to allocate hours" });
+    }
+  });
+
   // Get all active students (for wallet management - role-based access)
   app.get('/api/students/active', isAuthenticated, requireRole("tutor", "admin", "manager"), async (req: Request, res: Response) => {
     try {
