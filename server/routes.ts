@@ -789,6 +789,49 @@ export async function registerRoutes(
     }
   });
 
+  // Get student rollover summary (unused hours from previous months)
+  app.get('/api/students/:studentId/rollover', isAuthenticated, requireRole("tutor", "admin", "manager"), async (req: Request, res: Response) => {
+    try {
+      const { studentId } = req.params;
+      const { month } = req.query; // Format: "2025-10" for October 2025
+      
+      // Get all wallets for this student
+      const studentWallets = await storage.getHourWalletsByStudent(studentId);
+      
+      // Calculate total rollover (remaining minutes across all courses)
+      let totalRolloverMinutes = 0;
+      const breakdown: Array<{
+        courseName: string;
+        courseId: string;
+        remainingMinutes: number;
+        monthRange: string;
+      }> = [];
+      
+      for (const wallet of studentWallets) {
+        const remaining = wallet.purchasedMinutes - wallet.consumedMinutes;
+        if (remaining > 0) {
+          totalRolloverMinutes += remaining;
+          breakdown.push({
+            courseName: wallet.course?.title || "Unknown Course",
+            courseId: wallet.courseId,
+            remainingMinutes: remaining,
+            monthRange: "Previous months",
+          });
+        }
+      }
+      
+      res.json({
+        totalMinutes: totalRolloverMinutes,
+        totalHours: Math.floor(totalRolloverMinutes / 60),
+        remainingMinutes: totalRolloverMinutes % 60,
+        breakdown,
+      });
+    } catch (error) {
+      console.error("Error fetching rollover:", error);
+      res.status(500).json({ message: "Failed to fetch rollover data" });
+    }
+  });
+
   // Get all active students (for wallet management - role-based access)
   app.get('/api/students/active', isAuthenticated, requireRole("tutor", "admin", "manager"), async (req: Request, res: Response) => {
     try {

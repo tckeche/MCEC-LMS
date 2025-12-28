@@ -1,9 +1,10 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { Wallet, Search, Plus, Clock, User, BookOpen } from "lucide-react";
-import { useState } from "react";
+import { Wallet, Search, Plus, Clock, User, BookOpen, CalendarDays } from "lucide-react";
+import { useState, useEffect, useMemo } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
+import { format, startOfMonth, addMonths } from "date-fns";
 import { EmptyState } from "@/components/empty-state";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -59,20 +60,53 @@ type ActiveStudent = {
   phone: string | null;
 };
 
+type RolloverData = {
+  totalMinutes: number;
+  totalHours: number;
+  remainingMinutes: number;
+  breakdown: Array<{
+    courseName: string;
+    courseId: string;
+    remainingMinutes: number;
+    monthRange: string;
+  }>;
+};
+
 const addHoursSchema = z.object({
   studentId: z.string().min(1, "Please select a student"),
+  month: z.string().min(1, "Please select a month"),
   courseId: z.string().min(1, "Please select a course"),
-  minutes: z.coerce.number().min(15, "Minimum 15 minutes").max(6000, "Maximum 100 hours"),
-  reason: z.string().min(1, "Reason is required"),
+  hours: z.coerce.number().min(0.25, "Minimum 15 minutes (0.25 hours)").max(100, "Maximum 100 hours"),
+  reason: z.string().optional(),
 });
 
 type AddHoursFormData = z.infer<typeof addHoursSchema>;
+
+function generateMonthOptions() {
+  const options: { value: string; label: string }[] = [];
+  const now = new Date();
+  
+  for (let i = 0; i < 12; i++) {
+    const date = addMonths(startOfMonth(now), i);
+    options.push({
+      value: format(date, "yyyy-MM"),
+      label: format(date, "MMMM yyyy"),
+    });
+  }
+  
+  return options;
+}
 
 export default function AdminWallets() {
   const [searchQuery, setSearchQuery] = useState("");
   const [studentSearchQuery, setStudentSearchQuery] = useState("");
   const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [selectedStudentId, setSelectedStudentId] = useState("");
+  const [selectedMonth, setSelectedMonth] = useState(format(new Date(), "yyyy-MM"));
   const { toast } = useToast();
+  
+  const monthOptions = useMemo(() => generateMonthOptions(), []);
+  const currentMonthLabel = monthOptions.find(m => m.value === selectedMonth)?.label || format(new Date(), "MMMM yyyy");
 
   const { data: wallets, isLoading } = useQuery<WalletWithDetails[]>({
     queryKey: ["/api/hour-wallets"],
@@ -86,7 +120,18 @@ export default function AdminWallets() {
     queryKey: ["/api/courses"],
   });
 
-  // Filter students by search query
+  const { data: rolloverData, isLoading: rolloverLoading } = useQuery<RolloverData>({
+    queryKey: ["/api/students", selectedStudentId, "rollover", selectedMonth],
+    queryFn: async () => {
+      const response = await fetch(`/api/students/${selectedStudentId}/rollover?month=${selectedMonth}`);
+      if (!response.ok) {
+        throw new Error("Failed to fetch rollover data");
+      }
+      return response.json();
+    },
+    enabled: !!selectedStudentId,
+  });
+
   const filteredStudents = students?.filter(student => {
     if (!studentSearchQuery) return true;
     const searchLower = studentSearchQuery.toLowerCase();
@@ -98,23 +143,42 @@ export default function AdminWallets() {
     resolver: zodResolver(addHoursSchema),
     defaultValues: {
       studentId: "",
+      month: format(new Date(), "yyyy-MM"),
       courseId: "",
-      minutes: 60,
+      hours: 1,
       reason: "",
     },
   });
 
+  useEffect(() => {
+    form.setValue("studentId", selectedStudentId);
+  }, [selectedStudentId, form]);
+
+  useEffect(() => {
+    form.setValue("month", selectedMonth);
+  }, [selectedMonth, form]);
+
   const addHoursMutation = useMutation({
     mutationFn: async (data: AddHoursFormData) => {
-      return apiRequest("POST", "/api/hour-wallets", data);
+      const minutes = Math.round(data.hours * 60);
+      
+      return apiRequest("POST", "/api/hour-wallets", {
+        studentId: data.studentId,
+        courseId: data.courseId,
+        minutes,
+        reason: data.reason || `Hours added for ${currentMonthLabel}`,
+      });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/hour-wallets"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/students", selectedStudentId, "rollover"] });
       setIsDialogOpen(false);
       form.reset();
+      setSelectedStudentId("");
+      setSelectedMonth(format(new Date(), "yyyy-MM"));
       toast({
         title: "Hours added",
-        description: "The hours have been added to the student's wallet.",
+        description: `Hours have been added for ${currentMonthLabel}.`,
       });
     },
     onError: () => {
@@ -148,6 +212,11 @@ export default function AdminWallets() {
     return `${hours}h ${mins}m`;
   };
 
+  const formatRollover = (totalMinutes: number) => {
+    const hours = Math.floor(totalMinutes / 60);
+    return `${hours} hours (${totalMinutes} minutes)`;
+  };
+
   return (
     <div className="space-y-6 p-6">
       <div className="flex flex-wrap items-center justify-between gap-4">
@@ -159,6 +228,9 @@ export default function AdminWallets() {
           setIsDialogOpen(open);
           if (!open) {
             setStudentSearchQuery("");
+            setSelectedStudentId("");
+            setSelectedMonth(format(new Date(), "yyyy-MM"));
+            form.reset();
           }
         }}>
           <DialogTrigger asChild>
@@ -167,22 +239,29 @@ export default function AdminWallets() {
               Add Hours
             </Button>
           </DialogTrigger>
-          <DialogContent>
+          <DialogContent className="sm:max-w-md">
             <DialogHeader>
               <DialogTitle>Add Hours to Student Wallet</DialogTitle>
               <DialogDescription>
-                Add tutoring hours to a student's wallet for a specific course.
+                Add tutoring hours for a specific month.
               </DialogDescription>
             </DialogHeader>
             <Form {...form}>
               <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+                {/* 1. Student Selector */}
                 <FormField
                   control={form.control}
                   name="studentId"
                   render={({ field }) => (
                     <FormItem>
                       <FormLabel>Student</FormLabel>
-                      <Select onValueChange={field.onChange} value={field.value}>
+                      <Select 
+                        onValueChange={(value) => {
+                          field.onChange(value);
+                          setSelectedStudentId(value);
+                        }} 
+                        value={field.value}
+                      >
                         <FormControl>
                           <SelectTrigger data-testid="select-student">
                             <SelectValue placeholder={studentsLoading ? "Loading students..." : "Select a student"} />
@@ -215,6 +294,72 @@ export default function AdminWallets() {
                     </FormItem>
                   )}
                 />
+
+                {/* 2. Month Selector */}
+                <FormField
+                  control={form.control}
+                  name="month"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Month</FormLabel>
+                      <Select 
+                        onValueChange={(value) => {
+                          field.onChange(value);
+                          setSelectedMonth(value);
+                        }} 
+                        value={field.value}
+                      >
+                        <FormControl>
+                          <SelectTrigger data-testid="select-month">
+                            <SelectValue placeholder="Select a month" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          {monthOptions.map((option) => (
+                            <SelectItem key={option.value} value={option.value}>
+                              {option.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                {/* 3. Rollover Summary Line */}
+                <div className="rounded-md border bg-muted/50 p-3">
+                  <div className="flex items-center gap-2 text-sm">
+                    <CalendarDays className="h-4 w-4 text-muted-foreground" />
+                    <span className="font-medium">Rollover from previous months:</span>
+                    {!selectedStudentId ? (
+                      <span className="text-muted-foreground">Select a student</span>
+                    ) : rolloverLoading ? (
+                      <span className="text-muted-foreground">Loading...</span>
+                    ) : (
+                      <span data-testid="text-rollover-total">
+                        {formatRollover(rolloverData?.totalMinutes || 0)}
+                      </span>
+                    )}
+                  </div>
+
+                  {/* 4. Rollover Breakdown */}
+                  {selectedStudentId && !rolloverLoading && rolloverData && rolloverData.totalMinutes > 0 && (
+                    <div className="mt-3 space-y-2 border-t pt-3">
+                      {rolloverData.breakdown.map((item, index) => (
+                        <div key={index} className="text-sm" data-testid={`rollover-item-${index}`}>
+                          <div className="font-medium">{item.courseName}</div>
+                          <div className="text-muted-foreground">{item.monthRange}</div>
+                          <div className="text-muted-foreground">
+                            Outstanding: {formatMinutes(item.remainingMinutes)}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* 5. Course Selector */}
                 <FormField
                   control={form.control}
                   name="courseId"
@@ -239,19 +384,21 @@ export default function AdminWallets() {
                     </FormItem>
                   )}
                 />
+
+                {/* 6. Hours to Add Input */}
                 <FormField
                   control={form.control}
-                  name="minutes"
+                  name="hours"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Minutes to Add</FormLabel>
+                      <FormLabel>Hours to add for {currentMonthLabel}</FormLabel>
                       <FormControl>
                         <Input
                           type="number"
-                          min={15}
-                          step={15}
-                          placeholder="60"
-                          data-testid="input-minutes"
+                          min={0.25}
+                          step={0.25}
+                          placeholder="1"
+                          data-testid="input-hours"
                           {...field}
                         />
                       </FormControl>
@@ -259,12 +406,14 @@ export default function AdminWallets() {
                     </FormItem>
                   )}
                 />
+
+                {/* 7. Reason (optional) */}
                 <FormField
                   control={form.control}
                   name="reason"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Reason</FormLabel>
+                      <FormLabel>Reason (optional)</FormLabel>
                       <FormControl>
                         <Input
                           placeholder="e.g., Package purchase, bonus hours"
@@ -276,21 +425,25 @@ export default function AdminWallets() {
                     </FormItem>
                   )}
                 />
-                <DialogFooter>
+
+                {/* 8 & 9. Action Buttons */}
+                <DialogFooter className="flex-col gap-2 sm:flex-col">
+                  <Button
+                    type="submit"
+                    disabled={addHoursMutation.isPending}
+                    className="w-full"
+                    data-testid="button-submit-hours"
+                  >
+                    {addHoursMutation.isPending ? "Adding..." : `Add hours for ${currentMonthLabel}`}
+                  </Button>
                   <Button
                     type="button"
                     variant="outline"
                     onClick={() => setIsDialogOpen(false)}
+                    className="w-full"
                     data-testid="button-cancel"
                   >
                     Cancel
-                  </Button>
-                  <Button
-                    type="submit"
-                    disabled={addHoursMutation.isPending}
-                    data-testid="button-submit-hours"
-                  >
-                    {addHoursMutation.isPending ? "Adding..." : "Add Hours"}
                   </Button>
                 </DialogFooter>
               </form>
