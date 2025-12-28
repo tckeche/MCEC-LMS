@@ -1,0 +1,64 @@
+UI redesign only. Do not touch scheduling logic, finance logic, or database schemas except where absolutely necessary for UI rendering. The app must remain fully functional. Goal is to mimic the premium glow, glass, and animation feel of https://www.nuroza.co.za across the whole webapp.
+
+Scope
+1. Global styling and design tokens
+Add a single source of truth for theme tokens and reuse everywhere.
+- Create CSS variables in client/src/index.css (or your global css file) for:
+  --bg, --bg-2, --card, --border, --text, --muted, --primary, --primary-2, --ring, --shadow
+- Implement a dark theme as default and keep the existing light mode if present.
+- Update Tailwind config to map these tokens so we can use them via utility classes.
+- Ensure typography looks premium: consistent heading scale, letter spacing, and line height.
+
+2. Background glow system
+Create a reusable background component that can be dropped into pages:
+- Soft radial gradient blobs in corners, very subtle
+- Optional animated drift (slow) using CSS keyframes
+- Must not reduce readability. Text contrast must remain high.
+
+3. Glass card component
+Create a reusable <GlassCard> wrapper using the tokenized colors:
+- Slight blur
+- Thin border
+- Soft shadow
+- Hover lift and glow on interactive cards only
+
+4. Motion and animations
+Add Framer Motion (if not already installed).
+Rules:
+- Page transitions: fade in with slight upward movement, duration 0.25 to 0.35s
+- Section reveal on scroll using IntersectionObserver or framer useInView
+- Card stagger on dashboards
+- Button hover: tiny scale 1.01 to 1.03 and glow increase
+- Keep motion subtle and consistent, no bouncing
+
+5. Apply the redesign to these areas first, without changing functionality
+A. Landing page
+- Hero with strong headline, subtext, primary CTA, secondary CTA
+- Add the animated glow background behind hero
+- Ensure Sign In buttons route correctly and are visually consistent
+
+B. Auth pages
+- Make /auth/login, /auth/staff-login, /auth/staff-proposal match the same premium style
+- Centered glass panel, clean inputs, clear error messages, consistent buttons
+- Ensure loading states are styled, not raw text
+
+C. App shell
+- Sidebar: modern spacing, active state glow, grouped nav headings, icons aligned
+- Top bar: subtle border, notification icon styling, user menu styling
+- Main content: consistent padding and max width
+
+D. Dashboards
+- Student, Tutor, Manager, Admin dashboards use the same card grid language
+- Donut charts must be visible and readable in dark mode
+- Calendar components must match styling
+
+6. Acceptance checks you must run before telling me it is done
+- No route changes or broken links
+- Create Course works and does not hang
+- Staff login, student login both work and redirect into the correct dashboard
+- Hours wallet modal is readable, aligned, and matches the new style
+- Donut charts visible in dark mode
+- Lighthouse basic pass for performance: no massive animated reflows
+
+Deliverable
+Commit changes with a checkpoint named “Nuroza style UI pass 1” and give me a list of the exact files changed.

@@ -1,9 +1,17 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { ArrowLeft, LogIn, AlertCircle } from "lucide-react";
+import {
+  GlassCard,
+  GlassCardContent,
+  GlassCardHeader,
+  GlassCardTitle,
+  GlassCardDescription,
+} from "@/components/ui/glass-card";
+import { GlowBackground } from "@/components/ui/glow-background";
+import { PageTransition } from "@/components/ui/page-transition";
+import { ArrowLeft, LogIn, AlertCircle, Loader2 } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { useToast } from "@/hooks/use-toast";
@@ -51,7 +59,6 @@ export default function Login() {
         throw new Error(data.message || "Failed to login");
       }
       
-      // Invalidate and refetch auth user to ensure hydration before redirect
       await queryClient.invalidateQueries({ queryKey: ["/api/auth/user"] });
       await queryClient.fetchQuery({ queryKey: ["/api/auth/user"] });
       
@@ -60,7 +67,6 @@ export default function Login() {
         description: "Login successful!",
       });
       
-      // Full page reload ensures App.tsx re-renders with hydrated user
       window.location.href = data.redirect || "/";
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to login";
@@ -77,100 +83,111 @@ export default function Login() {
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
-      <header className="sticky top-0 z-50 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-        <div className="mx-auto flex h-20 max-w-7xl items-center justify-between px-4 md:px-8">
+      <header className="sticky top-0 z-50 border-b border-border/50 bg-background/80 backdrop-blur-xl">
+        <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 md:px-8">
           <div className="flex items-center gap-3">
             <Link href="/">
-              <img src={mcecLogo} alt="MCEC Logo" className="h-20 object-contain cursor-pointer" data-testid="img-logo" />
+              <img src={mcecLogo} alt="MCEC Logo" className="h-12 object-contain cursor-pointer" data-testid="img-logo" />
             </Link>
           </div>
           <ThemeToggle />
         </div>
       </header>
 
-      <main className="flex-1 flex items-center justify-center p-4">
-        <Card className="w-full max-w-md">
-          <CardHeader>
-            <div className="flex items-center gap-3 mb-2">
-              <div className="flex h-10 w-10 items-center justify-center rounded-md bg-primary/10 text-primary">
-                <LogIn className="h-5 w-5" />
-              </div>
-              <CardTitle className="text-xl" data-testid="text-login-title">
-                Sign In
-              </CardTitle>
-            </div>
-            <CardDescription data-testid="text-login-description">
-              Sign in to your student or parent account
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            {error && (
-              <div className="mb-4 p-3 rounded-md bg-destructive/10 border border-destructive/20">
-                <div className="flex items-center gap-2 text-destructive">
-                  <AlertCircle className="h-4 w-4" />
-                  <p className="text-sm" data-testid="text-login-error">{error}</p>
+      <GlowBackground variant="hero" animated className="flex-1 flex items-center justify-center p-4">
+        <PageTransition>
+          <GlassCard className="w-full max-w-md">
+            <GlassCardHeader>
+              <div className="flex items-center gap-3 mb-2">
+                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 text-primary ring-1 ring-primary/20">
+                  <LogIn className="h-5 w-5" />
                 </div>
+                <GlassCardTitle className="text-xl" data-testid="text-login-title">
+                  Sign In
+                </GlassCardTitle>
               </div>
-            )}
-            
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="email">Email</Label>
-                <Input
-                  id="email"
-                  type="email"
-                  placeholder="your@email.com"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  required
-                  data-testid="input-login-email"
-                />
-              </div>
+              <GlassCardDescription data-testid="text-login-description">
+                Sign in to your student or parent account
+              </GlassCardDescription>
+            </GlassCardHeader>
+            <GlassCardContent>
+              {error && (
+                <div className="mb-4 p-3 rounded-lg bg-destructive/10 border border-destructive/20">
+                  <div className="flex items-center gap-2 text-destructive">
+                    <AlertCircle className="h-4 w-4 shrink-0" />
+                    <p className="text-sm" data-testid="text-login-error">{error}</p>
+                  </div>
+                </div>
+              )}
               
-              <div className="space-y-2">
-                <Label htmlFor="password">Password</Label>
-                <Input
-                  id="password"
-                  type="password"
-                  placeholder="Enter your password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  required
-                  data-testid="input-login-password"
-                />
-              </div>
+              <form onSubmit={handleSubmit} className="space-y-4">
+                <div className="space-y-2">
+                  <Label htmlFor="email">Email</Label>
+                  <Input
+                    id="email"
+                    type="email"
+                    placeholder="your@email.com"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    required
+                    className="bg-background/50"
+                    data-testid="input-login-email"
+                  />
+                </div>
+                
+                <div className="space-y-2">
+                  <Label htmlFor="password">Password</Label>
+                  <Input
+                    id="password"
+                    type="password"
+                    placeholder="Enter your password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    required
+                    className="bg-background/50"
+                    data-testid="input-login-password"
+                  />
+                </div>
 
-              <div className="flex flex-col gap-3 pt-4">
-                <Button 
-                  type="submit" 
-                  disabled={isSubmitting}
-                  data-testid="button-login-submit"
-                >
-                  {isSubmitting ? "Signing in..." : "Sign In"}
-                </Button>
-                <div className="text-center text-sm text-muted-foreground">
-                  Don't have an account?{" "}
-                  <Link href="/auth/parent-signup" className="text-primary hover:underline" data-testid="link-signup">
-                    Sign up
-                  </Link>
+                <div className="flex flex-col gap-3 pt-4">
+                  <Button 
+                    type="submit" 
+                    disabled={isSubmitting}
+                    data-testid="button-login-submit"
+                  >
+                    {isSubmitting ? (
+                      <>
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        Signing in...
+                      </>
+                    ) : (
+                      "Sign In"
+                    )}
+                  </Button>
+                  <div className="text-center text-sm text-muted-foreground">
+                    Don't have an account?{" "}
+                    <Link href="/auth/parent-signup" className="text-primary hover:underline" data-testid="link-signup">
+                      Sign up
+                    </Link>
+                  </div>
+                  <div className="text-center text-sm text-muted-foreground">
+                    Staff member?{" "}
+                    <Link href="/auth/staff-login" className="text-primary hover:underline" data-testid="link-staff-login">
+                      Staff login
+                    </Link>
+                  </div>
+                  <Button variant="ghost" asChild data-testid="button-back">
+                    <Link href="/">
+                      <ArrowLeft className="mr-2 h-4 w-4" />
+                      Back to Home
+                    </Link>
+                  </Button>
                 </div>
-                <div className="text-center text-sm text-muted-foreground">
-                  Staff member?{" "}
-                  <Link href="/auth/staff-login" className="text-primary hover:underline" data-testid="link-staff-login">
-                    Staff login
-                  </Link>
-                </div>
-                <Button variant="ghost" asChild data-testid="button-back">
-                  <Link href="/">
-                    <ArrowLeft className="mr-2 h-4 w-4" />
-                    Back to Home
-                  </Link>
-                </Button>
-              </div>
-            </form>
-          </CardContent>
-        </Card>
-      </main>
+              </form>
+            </GlassCardContent>
+          </GlassCard>
+        </PageTransition>
+      </GlowBackground>
     </div>
   );
 }
