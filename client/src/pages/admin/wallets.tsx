@@ -56,7 +56,7 @@ const addHoursSchema = z.object({
   studentId: z.string().min(1, "Please select a student"),
   courseId: z.string().min(1, "Please select a course"),
   minutes: z.coerce.number().min(15, "Minimum 15 minutes").max(6000, "Maximum 100 hours"),
-  reason: z.string().optional(),
+  reason: z.string().min(1, "Reason is required"),
 });
 
 type AddHoursFormData = z.infer<typeof addHoursSchema>;
@@ -229,7 +229,7 @@ export default function AdminWallets() {
                   name="reason"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Reason (optional)</FormLabel>
+                      <FormLabel>Reason</FormLabel>
                       <FormControl>
                         <Input
                           placeholder="e.g., Package purchase, bonus hours"

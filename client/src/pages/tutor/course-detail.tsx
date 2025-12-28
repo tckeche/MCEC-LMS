@@ -1,11 +1,12 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useParams, Link } from "wouter";
 import { useState, useEffect } from "react";
-import { BookOpen, Users, UserPlus, ArrowLeft, Check, Search, Video, Pencil, ExternalLink, X, Loader2 } from "lucide-react";
+import { BookOpen, Users, UserPlus, ArrowLeft, Check, Search, Video, Pencil, ExternalLink, X, Loader2, Clock, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
   Dialog,
   DialogContent,
@@ -13,6 +14,7 @@ import {
   DialogHeader,
   DialogTitle,
   DialogTrigger,
+  DialogFooter,
 } from "@/components/ui/dialog";
 import {
   Command,
@@ -24,12 +26,18 @@ import {
 } from "@/components/ui/command";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Progress } from "@/components/ui/progress";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import type { CourseWithTutor, User, Enrollment } from "@shared/schema";
+import type { CourseWithTutor, User, Enrollment, HourWallet } from "@shared/schema";
 
 interface EnrollmentWithStudent extends Enrollment {
   student: User;
+}
+
+interface WalletWithDetails extends HourWallet {
+  student?: User;
+  course?: { id: string; title: string };
 }
 
 export default function TutorCourseDetail() {
@@ -38,6 +46,10 @@ export default function TutorCourseDetail() {
   const [searchQuery, setSearchQuery] = useState("");
   const [isEditingTeamsLink, setIsEditingTeamsLink] = useState(false);
   const [teamsLinkInput, setTeamsLinkInput] = useState("");
+  const [addHoursDialogOpen, setAddHoursDialogOpen] = useState(false);
+  const [selectedStudentForHours, setSelectedStudentForHours] = useState<User | null>(null);
+  const [addMinutes, setAddMinutes] = useState(60);
+  const [addReason, setAddReason] = useState("");
   const { toast } = useToast();
 
   const { data: course, isLoading: courseLoading } = useQuery<CourseWithTutor>({
@@ -50,6 +62,11 @@ export default function TutorCourseDetail() {
 
   const { data: allStudents, isLoading: studentsLoading, isError: studentsError } = useQuery<User[]>({
     queryKey: ["/api/tutor/active-students"],
+  });
+
+  const { data: wallets } = useQuery<WalletWithDetails[]>({
+    queryKey: ["/api/hour-wallets/course", id],
+    enabled: !!id,
   });
 
   const enrollMutation = useMutation({
@@ -98,6 +115,31 @@ export default function TutorCourseDetail() {
     },
   });
 
+  const addHoursMutation = useMutation({
+    mutationFn: async (data: { studentId: string; courseId: string; addMinutes: number; reason: string }) => {
+      return apiRequest("POST", "/api/hour-wallets/top-up", data);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/hour-wallets/course", id] });
+      queryClient.invalidateQueries({ queryKey: ["/api/courses", id, "enrollments"] });
+      setAddHoursDialogOpen(false);
+      setSelectedStudentForHours(null);
+      setAddMinutes(60);
+      setAddReason("");
+      toast({
+        title: "Hours added",
+        description: "The hours have been added to the student's wallet.",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Error",
+        description: error?.message || "Failed to add hours. Please try again.",
+        variant: "destructive",
+      });
+    },
+  });
+
   useEffect(() => {
     if (course?.teamsMeetingLink) {
       setTeamsLinkInput(course.teamsMeetingLink);
@@ -112,6 +154,40 @@ export default function TutorCourseDetail() {
   const handleCancelEditTeamsLink = () => {
     setTeamsLinkInput(course?.teamsMeetingLink || "");
     setIsEditingTeamsLink(false);
+  };
+
+  const handleOpenAddHoursDialog = (student: User) => {
+    setSelectedStudentForHours(student);
+    setAddHoursDialogOpen(true);
+  };
+
+  const handleSubmitAddHours = () => {
+    if (!selectedStudentForHours || !id || !addReason.trim()) {
+      toast({
+        title: "Error",
+        description: "Please fill in all fields including reason.",
+        variant: "destructive",
+      });
+      return;
+    }
+    addHoursMutation.mutate({
+      studentId: selectedStudentForHours.id,
+      courseId: id,
+      addMinutes,
+      reason: addReason.trim(),
+    });
+  };
+
+  const getWalletForStudent = (studentId: string) => {
+    return wallets?.find(w => w.studentId === studentId);
+  };
+
+  const formatMinutes = (minutes: number) => {
+    const hours = Math.floor(minutes / 60);
+    const mins = minutes % 60;
+    if (hours === 0) return `${mins}m`;
+    if (mins === 0) return `${hours}h`;
+    return `${hours}h ${mins}m`;
   };
 
   const enrolledStudentIds = enrollments?.map(e => e.studentId) || [];
@@ -352,33 +428,65 @@ export default function TutorCourseDetail() {
             </div>
           ) : enrollments && enrollments.length > 0 ? (
             <div className="space-y-3">
-              {enrollments.map((enrollment) => (
-                <div
-                  key={enrollment.id}
-                  className="flex items-center justify-between gap-3 rounded-lg border p-3"
-                  data-testid={`enrollment-${enrollment.id}`}
-                >
-                  <div className="flex items-center gap-3">
-                    <Avatar>
-                      <AvatarImage src={enrollment.student?.profileImageUrl || undefined} />
-                      <AvatarFallback>
-                        {(enrollment.student?.firstName?.[0] || "") + (enrollment.student?.lastName?.[0] || "")}
-                      </AvatarFallback>
-                    </Avatar>
-                    <div>
-                      <p className="font-medium">
-                        {enrollment.student?.firstName} {enrollment.student?.lastName}
-                      </p>
-                      <p className="text-sm text-muted-foreground">
-                        {enrollment.student?.email}
-                      </p>
+              {enrollments.map((enrollment) => {
+                const wallet = getWalletForStudent(enrollment.studentId);
+                const remaining = wallet ? wallet.purchasedMinutes - wallet.consumedMinutes : 0;
+                const usagePercent = wallet && wallet.purchasedMinutes > 0 
+                  ? Math.round((wallet.consumedMinutes / wallet.purchasedMinutes) * 100) 
+                  : 0;
+                
+                return (
+                  <div
+                    key={enrollment.id}
+                    className="flex flex-col gap-3 rounded-lg border p-3 sm:flex-row sm:items-center sm:justify-between"
+                    data-testid={`enrollment-${enrollment.id}`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <Avatar>
+                        <AvatarImage src={enrollment.student?.profileImageUrl || undefined} />
+                        <AvatarFallback>
+                          {(enrollment.student?.firstName?.[0] || "") + (enrollment.student?.lastName?.[0] || "")}
+                        </AvatarFallback>
+                      </Avatar>
+                      <div>
+                        <p className="font-medium">
+                          {enrollment.student?.firstName} {enrollment.student?.lastName}
+                        </p>
+                        <p className="text-sm text-muted-foreground">
+                          {enrollment.student?.email}
+                        </p>
+                      </div>
+                    </div>
+                    
+                    <div className="flex flex-wrap items-center gap-3">
+                      {wallet ? (
+                        <div className="flex items-center gap-2 text-sm">
+                          <Clock className="h-4 w-4 text-muted-foreground" />
+                          <span className="font-medium">{formatMinutes(remaining)}</span>
+                          <span className="text-muted-foreground">remaining</span>
+                          <Progress value={100 - usagePercent} className="h-1.5 w-16" />
+                        </div>
+                      ) : (
+                        <span className="text-sm text-muted-foreground">No wallet</span>
+                      )}
+                      
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => enrollment.student && handleOpenAddHoursDialog(enrollment.student)}
+                        data-testid={`button-add-hours-${enrollment.studentId}`}
+                      >
+                        <Plus className="mr-1 h-3 w-3" />
+                        Add Hours
+                      </Button>
+                      
+                      <Badge variant={enrollment.status === "active" ? "default" : "secondary"}>
+                        {enrollment.status}
+                      </Badge>
                     </div>
                   </div>
-                  <Badge variant={enrollment.status === "active" ? "default" : "secondary"}>
-                    {enrollment.status}
-                  </Badge>
-                </div>
-              ))}
+                );
+              })}
             </div>
           ) : (
             <div className="py-8 text-center">
@@ -390,6 +498,68 @@ export default function TutorCourseDetail() {
           )}
         </CardContent>
       </Card>
+
+      <Dialog open={addHoursDialogOpen} onOpenChange={setAddHoursDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Add Hours to Wallet</DialogTitle>
+            <DialogDescription>
+              Add tutoring hours for {selectedStudentForHours?.firstName} {selectedStudentForHours?.lastName} in {course?.title}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="minutes">Minutes to Add</Label>
+              <Input
+                id="minutes"
+                type="number"
+                min={15}
+                step={15}
+                value={addMinutes}
+                onChange={(e) => setAddMinutes(parseInt(e.target.value) || 0)}
+                placeholder="60"
+                data-testid="input-add-minutes"
+              />
+              <p className="text-xs text-muted-foreground">
+                {addMinutes > 0 ? `${Math.floor(addMinutes / 60)}h ${addMinutes % 60}m` : "0h 0m"}
+              </p>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="reason">Reason (required)</Label>
+              <Input
+                id="reason"
+                value={addReason}
+                onChange={(e) => setAddReason(e.target.value)}
+                placeholder="e.g., Package purchase, bonus hours"
+                data-testid="input-add-reason"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setAddHoursDialogOpen(false)}
+              data-testid="button-cancel-add-hours"
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleSubmitAddHours}
+              disabled={addHoursMutation.isPending || !addReason.trim() || addMinutes <= 0}
+              data-testid="button-submit-add-hours"
+            >
+              {addHoursMutation.isPending ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Adding...
+                </>
+              ) : (
+                "Add Hours"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

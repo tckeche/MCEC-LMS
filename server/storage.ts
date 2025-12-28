@@ -224,6 +224,8 @@ export interface IStorage {
   getHourWallet(id: string): Promise<HourWalletWithDetails | undefined>;
   getHourWalletByStudentCourse(studentId: string, courseId: string): Promise<HourWallet | undefined>;
   getHourWalletsByStudent(studentId: string): Promise<HourWalletWithDetails[]>;
+  getHourWalletsByCourse(courseId: string): Promise<HourWalletWithDetails[]>;
+  getAllHourWallets(): Promise<HourWalletWithDetails[]>;
   createHourWallet(wallet: InsertHourWallet): Promise<HourWallet>;
   addMinutesToWallet(studentId: string, courseId: string, minutes: number): Promise<HourWallet | undefined>;
   deductMinutesFromWallet(studentId: string, courseId: string, minutes: number): Promise<HourWallet | undefined>;
@@ -1364,6 +1366,36 @@ export class DatabaseStorage implements IStorage {
       .innerJoin(users, eq(hourWallets.studentId, users.id))
       .innerJoin(courses, eq(hourWallets.courseId, courses.id))
       .where(eq(hourWallets.studentId, studentId));
+    
+    return result.map(r => ({
+      ...r.hour_wallets,
+      student: r.users,
+      course: r.courses,
+    }));
+  }
+
+  async getAllHourWallets(): Promise<HourWalletWithDetails[]> {
+    const result = await db
+      .select()
+      .from(hourWallets)
+      .innerJoin(users, eq(hourWallets.studentId, users.id))
+      .innerJoin(courses, eq(hourWallets.courseId, courses.id))
+      .orderBy(hourWallets.updatedAt);
+    
+    return result.map(r => ({
+      ...r.hour_wallets,
+      student: r.users,
+      course: r.courses,
+    }));
+  }
+
+  async getHourWalletsByCourse(courseId: string): Promise<HourWalletWithDetails[]> {
+    const result = await db
+      .select()
+      .from(hourWallets)
+      .innerJoin(users, eq(hourWallets.studentId, users.id))
+      .innerJoin(courses, eq(hourWallets.courseId, courses.id))
+      .where(eq(hourWallets.courseId, courseId));
     
     return result.map(r => ({
       ...r.hour_wallets,

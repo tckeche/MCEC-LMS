@@ -2798,6 +2798,17 @@ export async function registerRoutes(
   // HOUR WALLET ROUTES
   // ==========================================
 
+  // Get all wallets (admin/manager only)
+  app.get('/api/hour-wallets', isAuthenticated, requireRole("admin", "manager"), async (req: Request, res: Response) => {
+    try {
+      const wallets = await storage.getAllHourWallets();
+      res.json(wallets);
+    } catch (error) {
+      console.error("Error fetching all wallets:", error);
+      res.status(500).json({ message: "Failed to fetch wallets" });
+    }
+  });
+
   // Get student's own wallets
   app.get('/api/hour-wallets/student', isAuthenticated, requireRole("student"), async (req: Request, res: Response) => {
     try {
@@ -2813,10 +2824,21 @@ export async function registerRoutes(
     }
   });
 
-  // Get wallet for specific student/course (manager/admin view)
-  app.get('/api/hour-wallets/:studentId/:courseId', isAuthenticated, requireRole("manager", "admin"), async (req: Request, res: Response) => {
+  // Get wallet for specific student/course (manager/admin/tutor view)
+  app.get('/api/hour-wallets/:studentId/:courseId', isAuthenticated, requireRole("manager", "admin", "tutor"), async (req: Request, res: Response) => {
     try {
-      const wallet = await storage.getHourWalletByStudentCourse(req.params.studentId, req.params.courseId);
+      const dbUser = (req as any).dbUser;
+      const { studentId, courseId } = req.params;
+      
+      // For tutors, verify they are the tutor of this course
+      if (dbUser.role === "tutor") {
+        const course = await storage.getCourse(courseId);
+        if (!course || course.tutorId !== dbUser.id) {
+          return res.status(403).json({ message: "Access denied: You can only view wallets for your own courses" });
+        }
+      }
+      
+      const wallet = await storage.getHourWalletByStudentCourse(studentId, courseId);
       if (!wallet) {
         return res.status(404).json({ message: "Wallet not found" });
       }
@@ -2827,7 +2849,30 @@ export async function registerRoutes(
     }
   });
 
-  // Create or add hours to wallet (manager/admin)
+  // Get all wallets for a course (for tutor's own courses)
+  app.get('/api/hour-wallets/course/:courseId', isAuthenticated, requireRole("manager", "admin", "tutor"), async (req: Request, res: Response) => {
+    try {
+      const dbUser = (req as any).dbUser;
+      const { courseId } = req.params;
+      
+      // For tutors, verify they are the tutor of this course
+      if (dbUser.role === "tutor") {
+        const course = await storage.getCourse(courseId);
+        if (!course || course.tutorId !== dbUser.id) {
+          return res.status(403).json({ message: "Access denied: You can only view wallets for your own courses" });
+        }
+      }
+      
+      // Get all wallets for this course with student and course details
+      const wallets = await storage.getHourWalletsByCourse(courseId);
+      res.json(wallets);
+    } catch (error) {
+      console.error("Error fetching course wallets:", error);
+      res.status(500).json({ message: "Failed to fetch wallets" });
+    }
+  });
+
+  // Create or add hours to wallet (manager/admin - original endpoint)
   app.post('/api/hour-wallets', isAuthenticated, requireRole("manager", "admin"), async (req: Request, res: Response) => {
     try {
       const { studentId, courseId, minutes, reason } = req.body;
@@ -2835,6 +2880,10 @@ export async function registerRoutes(
       
       if (!studentId || !courseId || !minutes || minutes <= 0) {
         return res.status(400).json({ message: "Invalid data: studentId, courseId, and positive minutes required" });
+      }
+      
+      if (!reason || reason.trim() === "") {
+        return res.status(400).json({ message: "Reason is required for top-up" });
       }
 
       let wallet;
@@ -2859,24 +2908,99 @@ export async function registerRoutes(
       }
       
       // Create wallet transaction audit log
+      let transaction = null;
       if (wallet) {
         const remainingMinutes = wallet.purchasedMinutes - wallet.consumedMinutes;
-        await storage.createWalletTransaction({
+        transaction = await storage.createWalletTransaction({
           walletId: wallet.id,
           minutesDelta: minutes,
           balanceAfter: remainingMinutes,
-          reason: reason || `Admin added ${minutes} minutes`,
+          reason: reason.trim(),
           performedById: performedById || null,
         });
       }
       
-      res.status(isNew ? 201 : 200).json(wallet);
+      res.status(isNew ? 201 : 200).json({ wallet, transaction });
     } catch (error) {
       if (error instanceof z.ZodError) {
         return res.status(400).json({ message: "Invalid data", errors: error.errors });
       }
       console.error("Error creating/updating wallet:", error);
       res.status(500).json({ message: "Failed to update wallet" });
+    }
+  });
+
+  // Top-up hours to wallet (admin, manager, or tutor with course permission)
+  app.post('/api/hour-wallets/top-up', isAuthenticated, requireRole("admin", "manager", "tutor"), async (req: Request, res: Response) => {
+    try {
+      const { studentId, courseId, addMinutes, reason } = req.body;
+      const performedById = req.user?.claims?.sub;
+      const dbUser = (req as any).dbUser;
+      
+      if (!studentId || !courseId || !addMinutes || addMinutes <= 0) {
+        return res.status(400).json({ message: "Invalid data: studentId, courseId, and positive addMinutes required" });
+      }
+      
+      if (!reason || reason.trim() === "") {
+        return res.status(400).json({ message: "Reason is required for top-up" });
+      }
+      
+      // For tutors, verify they are the tutor of this course
+      if (dbUser.role === "tutor") {
+        const course = await storage.getCourse(courseId);
+        if (!course || course.tutorId !== dbUser.id) {
+          return res.status(403).json({ message: "Access denied: You can only add hours to courses you teach" });
+        }
+        
+        // Also verify the student is enrolled in this course
+        const enrollments = await storage.getEnrollmentsByCourse(courseId);
+        const isEnrolled = enrollments.some(e => e.studentId === studentId && e.status === "active");
+        if (!isEnrolled) {
+          return res.status(403).json({ message: "Access denied: This student is not enrolled in your course" });
+        }
+      }
+
+      let wallet;
+      let isNew = false;
+      
+      // Check if wallet exists
+      const existingWallet = await storage.getHourWalletByStudentCourse(studentId, courseId);
+      
+      if (existingWallet) {
+        // Add to existing wallet (increments purchasedMinutes, does not overwrite)
+        wallet = await storage.addMinutesToWallet(studentId, courseId, addMinutes);
+      } else {
+        // Create new wallet
+        const validated = insertHourWalletSchema.parse({
+          studentId,
+          courseId,
+          purchasedMinutes: addMinutes,
+          consumedMinutes: 0,
+        });
+        wallet = await storage.createHourWallet(validated);
+        isNew = true;
+      }
+      
+      // Create wallet transaction audit log
+      let transaction = null;
+      if (wallet) {
+        const remainingMinutes = wallet.purchasedMinutes - wallet.consumedMinutes;
+        transaction = await storage.createWalletTransaction({
+          walletId: wallet.id,
+          minutesDelta: addMinutes,
+          balanceAfter: remainingMinutes,
+          reason: reason.trim(),
+          performedById: performedById || null,
+        });
+      }
+      
+      res.status(isNew ? 201 : 200).json({ wallet, transaction });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Invalid data", errors: error.errors });
+      }
+      console.error("Error in wallet top-up:", error);
+      res.status(500).json({ message: "Failed to add hours to wallet" });
     }
   });
 

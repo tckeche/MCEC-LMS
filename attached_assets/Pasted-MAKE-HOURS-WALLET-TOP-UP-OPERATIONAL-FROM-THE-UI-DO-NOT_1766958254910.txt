@@ -1,0 +1,86 @@
+MAKE HOURS WALLET TOP UP OPERATIONAL FROM THE UI. DO NOT REWORK ANY OTHER MODULES THAT ALREADY WORK.
+
+Problem
+Backend wallet logic may exist, but it is not linked to the frontend in a usable way. We need real UI flows for Admin, Manager, and Tutor to add hours to a student per course, with correct permissions and immediate effects.
+
+Goal
+Admin, Manager, and Tutor can add purchased hours to a student wallet for a specific course, and the student immediately sees updated remaining hours. The join tutorial lock and donut charts must reflect the updated wallet.
+
+Rules and permissions
+1 Admin can top up hours for any student, any course.
+2 Manager can top up hours for any student, any course.
+3 Tutor can top up hours only for students enrolled in courses where that tutor is primary tutor or co tutor.
+4 Every top up must record who did it, when, how many minutes, and the reason. Reason is mandatory.
+5 Top ups must never overwrite existing wallet values. Only increment purchased minutes and available minutes correctly.
+
+Backend requirements
+1 There must be a single source of truth for wallets, per studentId and courseId.
+2 Wallet fields must be consistent units, use minutes.
+3 If wallet row does not exist for studentId and courseId, create it on first top up.
+4 Create a wallet transaction record for every top up with a positive deltaMinutes, actorUserId, reason, courseId, studentId, createdAt.
+5 Return the updated wallet object in the response.
+
+API requirements
+If an endpoint already exists, use it. If it does not exist, create exactly one endpoint:
+POST /api/hour-wallets/top-up
+Body must include
+studentId
+courseId
+addMinutes
+reason
+Response must include
+wallet after update
+latest transaction row
+
+Frontend requirements
+Add a visible working UI in these exact places
+
+A Admin and Manager
+1 Student profile page must have a card called Hours Wallet
+2 It must show each course wallet and remaining minutes
+3 It must have a button Add Hours that opens a modal
+4 Modal fields
+course dropdown, searchable
+minutes to add, numeric
+reason, required
+5 On submit, call the top up API and refresh the wallet UI immediately, no page reload required
+6 If error, show a clear message, do not hang
+
+B Tutor
+1 On tutor course detail page, show the roster table
+2 Add an action button per student row called Add Hours
+3 Clicking opens the same modal, but tutor can only select that course
+4 On success, roster refreshes and student remaining hours updates
+
+Critical integration requirement
+After a top up, the following must use the updated wallet values
+1 Student join tutorial lock state
+2 Student course donut charts
+3 Tutor student donut charts and remaining hours fields
+If these components read from a different endpoint, update them to read from the wallet source of truth.
+
+Verification, must be executed and reported with numbers
+Use existing real accounts and do these tests
+
+Test 1 Admin top up
+Before, wallet remaining for Student A Course X
+Admin adds 120 minutes with reason
+After, wallet remaining increased by 120
+Show wallet before and after numbers plus the transaction row
+
+Test 2 Manager top up
+Repeat add 60 minutes, show before and after and transaction row
+
+Test 3 Tutor permission gate
+Tutor attempts to add hours to a student not in their course, must be blocked with friendly error
+Tutor adds hours to a student in their own course, must succeed
+
+Test 4 UI propagation
+After top up, open student dashboard and confirm donut charts and join lock reflect the new remaining hours without manual database edits
+
+Deliverables
+1 List of files changed
+2 The endpoint used
+3 One example request and response payload
+4 Proof of the four tests above with numeric values
+Stop after this is working. Do not implement enhancements like SSO, OTP, email, reports, file uploads unless I ask.
