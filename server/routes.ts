@@ -882,17 +882,17 @@ export async function registerRoutes(
       for (const allocation of allocations) {
         if (allocation.minutes > 0) {
           // Add minutes to wallet (creates wallet if doesn't exist)
-          await storage.addMinutesToWallet(studentId, allocation.courseId, allocation.minutes);
+          const wallet = await storage.addMinutesToWallet(studentId, allocation.courseId, allocation.minutes);
           
-          // Get the wallet to create transaction
-          const wallet = await storage.getHourWalletByStudentCourse(studentId, allocation.courseId);
+          // Create transaction record with correct schema fields
           if (wallet) {
+            const balanceAfter = wallet.purchasedMinutes - wallet.consumedMinutes;
             await storage.createWalletTransaction({
               walletId: wallet.id,
-              minutes: allocation.minutes,
-              type: "credit",
-              description: transactionReason,
-              performedById: req.user?.claims?.sub || "",
+              minutesDelta: allocation.minutes,
+              balanceAfter: balanceAfter,
+              reason: transactionReason,
+              performedById: req.user?.claims?.sub || null,
             });
           }
         }

@@ -1,5 +1,5 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { Wallet, Search, Plus, Clock, User, BookOpen, CalendarDays } from "lucide-react";
+import { Wallet, Search, Plus, Clock, User, BookOpen, CalendarDays, Split, RotateCcw, AlertCircle } from "lucide-react";
 import { useState, useEffect, useMemo } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -72,15 +72,29 @@ type RolloverData = {
   }>;
 };
 
-const addHoursSchema = z.object({
+type EnrolledCourse = {
+  courseId: string;
+  courseName: string;
+  courseLevel: string;
+  enrolledAt: string;
+};
+
+type CourseAllocation = {
+  courseId: string;
+  courseName: string;
+  courseLevel: string;
+  hours: number;
+  note: string;
+};
+
+const step1Schema = z.object({
   studentId: z.string().min(1, "Please select a student"),
   month: z.string().min(1, "Please select a month"),
-  courseId: z.string().min(1, "Please select a course"),
-  hours: z.coerce.number().min(0.25, "Minimum 15 minutes (0.25 hours)").max(100, "Maximum 100 hours"),
+  totalHours: z.coerce.number().min(0.25, "Minimum 15 minutes (0.25 hours)").max(100, "Maximum 100 hours"),
   reason: z.string().optional(),
 });
 
-type AddHoursFormData = z.infer<typeof addHoursSchema>;
+type Step1FormData = z.infer<typeof step1Schema>;
 
 function generateMonthOptions() {
   const options: { value: string; label: string }[] = [];
@@ -101,8 +115,11 @@ export default function AdminWallets() {
   const [searchQuery, setSearchQuery] = useState("");
   const [studentSearchQuery, setStudentSearchQuery] = useState("");
   const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [currentStep, setCurrentStep] = useState<1 | 2>(1);
   const [selectedStudentId, setSelectedStudentId] = useState("");
   const [selectedMonth, setSelectedMonth] = useState(format(new Date(), "yyyy-MM"));
+  const [step1Data, setStep1Data] = useState<Step1FormData | null>(null);
+  const [allocations, setAllocations] = useState<CourseAllocation[]>([]);
   const { toast } = useToast();
   
   const monthOptions = useMemo(() => generateMonthOptions(), []);
@@ -114,10 +131,6 @@ export default function AdminWallets() {
 
   const { data: students, isLoading: studentsLoading } = useQuery<ActiveStudent[]>({
     queryKey: ["/api/students/active"],
-  });
-
-  const { data: courses } = useQuery<Course[]>({
-    queryKey: ["/api/courses"],
   });
 
   const { data: rolloverData, isLoading: rolloverLoading } = useQuery<RolloverData>({
@@ -132,6 +145,18 @@ export default function AdminWallets() {
     enabled: !!selectedStudentId,
   });
 
+  const { data: enrolledCourses, isLoading: coursesLoading } = useQuery<EnrolledCourse[]>({
+    queryKey: ["/api/students", selectedStudentId, "enrolled-courses"],
+    queryFn: async () => {
+      const response = await fetch(`/api/students/${selectedStudentId}/enrolled-courses`);
+      if (!response.ok) {
+        throw new Error("Failed to fetch enrolled courses");
+      }
+      return response.json();
+    },
+    enabled: !!selectedStudentId,
+  });
+
   const filteredStudents = students?.filter(student => {
     if (!studentSearchQuery) return true;
     const searchLower = studentSearchQuery.toLowerCase();
@@ -139,13 +164,12 @@ export default function AdminWallets() {
            student.email.toLowerCase().includes(searchLower);
   }) || [];
 
-  const form = useForm<AddHoursFormData>({
-    resolver: zodResolver(addHoursSchema),
+  const form = useForm<Step1FormData>({
+    resolver: zodResolver(step1Schema),
     defaultValues: {
       studentId: "",
       month: format(new Date(), "yyyy-MM"),
-      courseId: "",
-      hours: 1,
+      totalHours: 1,
       reason: "",
     },
   });
@@ -158,41 +182,133 @@ export default function AdminWallets() {
     form.setValue("month", selectedMonth);
   }, [selectedMonth, form]);
 
-  const addHoursMutation = useMutation({
-    mutationFn: async (data: AddHoursFormData) => {
-      const minutes = Math.round(data.hours * 60);
+  // Initialize allocations only once when first entering Step 2
+  const [allocationsInitialized, setAllocationsInitialized] = useState(false);
+  
+  useEffect(() => {
+    if (currentStep === 2 && enrolledCourses && enrolledCourses.length > 0 && !allocationsInitialized) {
+      setAllocations(
+        enrolledCourses.map(course => ({
+          courseId: course.courseId,
+          courseName: course.courseName,
+          courseLevel: course.courseLevel,
+          hours: 0,
+          note: "",
+        }))
+      );
+      setAllocationsInitialized(true);
+    }
+  }, [currentStep, enrolledCourses, allocationsInitialized]);
+  
+  // Reset the initialization flag when going back to Step 1 or closing modal
+  useEffect(() => {
+    if (currentStep === 1) {
+      setAllocationsInitialized(false);
+    }
+  }, [currentStep]);
+
+  const allocateMutation = useMutation({
+    mutationFn: async () => {
+      if (!step1Data) throw new Error("Missing step 1 data");
       
-      return apiRequest("POST", "/api/hour-wallets", {
-        studentId: data.studentId,
-        courseId: data.courseId,
-        minutes,
-        reason: data.reason || `Hours added for ${currentMonthLabel}`,
+      const [year, month] = step1Data.month.split("-").map(Number);
+      const totalMinutes = Math.round(step1Data.totalHours * 60);
+      
+      return apiRequest("POST", "/api/wallets/allocate-month", {
+        studentId: step1Data.studentId,
+        month,
+        year,
+        totalMinutes,
+        allocations: allocations.map(a => ({
+          courseId: a.courseId,
+          minutes: Math.round(a.hours * 60),
+        })),
+        reason: step1Data.reason,
       });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/hour-wallets"] });
       queryClient.invalidateQueries({ queryKey: ["/api/students", selectedStudentId, "rollover"] });
-      setIsDialogOpen(false);
-      form.reset();
-      setSelectedStudentId("");
-      setSelectedMonth(format(new Date(), "yyyy-MM"));
+      resetModal();
       toast({
-        title: "Hours added",
-        description: `Hours have been added for ${currentMonthLabel}.`,
+        title: "Hours allocated",
+        description: `Hours have been allocated for ${currentMonthLabel}.`,
       });
     },
     onError: () => {
       toast({
         title: "Error",
-        description: "Failed to add hours. Please try again.",
+        description: "Failed to allocate hours. Please try again.",
         variant: "destructive",
       });
     },
   });
 
-  const onSubmit = (data: AddHoursFormData) => {
-    addHoursMutation.mutate(data);
+  const resetModal = () => {
+    setIsDialogOpen(false);
+    setCurrentStep(1);
+    setSelectedStudentId("");
+    setSelectedMonth(format(new Date(), "yyyy-MM"));
+    setStep1Data(null);
+    setAllocations([]);
+    setAllocationsInitialized(false);
+    setStudentSearchQuery("");
+    form.reset();
   };
+
+  const onStep1Submit = (data: Step1FormData) => {
+    setStep1Data(data);
+    setCurrentStep(2);
+  };
+
+  const updateAllocation = (courseId: string, hours: number) => {
+    setAllocations(prev => prev.map(a => 
+      a.courseId === courseId ? { ...a, hours: Math.max(0, hours) } : a
+    ));
+  };
+
+  const updateAllocationNote = (courseId: string, note: string) => {
+    setAllocations(prev => prev.map(a => 
+      a.courseId === courseId ? { ...a, note } : a
+    ));
+  };
+
+  const splitEvenly = () => {
+    if (!step1Data || allocations.length === 0) return;
+    
+    const totalHours = step1Data.totalHours;
+    const numCourses = allocations.length;
+    const hoursPerCourse = totalHours / numCourses;
+    
+    // Round each allocation to 2 decimal places
+    const baseHours = Math.floor(hoursPerCourse * 100) / 100;
+    const totalBase = baseHours * numCourses;
+    const remainder = Math.round((totalHours - totalBase) * 100) / 100;
+    
+    // Distribute remainder across courses (add small amounts to first few courses)
+    const remainderPerCourse = Math.round((remainder / numCourses) * 100) / 100;
+    let leftover = remainder;
+    
+    setAllocations(prev => prev.map((a, index) => {
+      let courseHours = baseHours;
+      if (leftover > 0) {
+        const add = Math.min(remainderPerCourse || 0.01, leftover);
+        courseHours += add;
+        leftover = Math.round((leftover - add) * 100) / 100;
+      }
+      return { ...a, hours: Math.round(courseHours * 100) / 100 };
+    }));
+  };
+
+  const clearAllocations = () => {
+    setAllocations(prev => prev.map(a => ({ ...a, hours: 0 })));
+  };
+
+  const totalAllocated = allocations.reduce((sum, a) => sum + a.hours, 0);
+  const remainingToAllocate = step1Data ? step1Data.totalHours - totalAllocated : 0;
+  const canSave = Math.abs(remainingToAllocate) < 0.01; // Allow small floating point tolerance
+
+  const selectedStudentName = students?.find(s => s.id === selectedStudentId)?.fullName || "Student";
 
   const filteredWallets = wallets?.filter(wallet => {
     if (!searchQuery) return true;
@@ -225,13 +341,8 @@ export default function AdminWallets() {
           <p className="text-muted-foreground">Manage student tutoring hours</p>
         </div>
         <Dialog open={isDialogOpen} onOpenChange={(open) => {
-          setIsDialogOpen(open);
-          if (!open) {
-            setStudentSearchQuery("");
-            setSelectedStudentId("");
-            setSelectedMonth(format(new Date(), "yyyy-MM"));
-            form.reset();
-          }
+          if (!open) resetModal();
+          else setIsDialogOpen(true);
         }}>
           <DialogTrigger asChild>
             <Button data-testid="button-add-hours">
@@ -239,215 +350,281 @@ export default function AdminWallets() {
               Add Hours
             </Button>
           </DialogTrigger>
-          <DialogContent className="sm:max-w-md">
-            <DialogHeader>
-              <DialogTitle>Add Hours to Student Wallet</DialogTitle>
-              <DialogDescription>
-                Add tutoring hours for a specific month.
-              </DialogDescription>
-            </DialogHeader>
-            <Form {...form}>
-              <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
-                {/* 1. Student Selector */}
-                <FormField
-                  control={form.control}
-                  name="studentId"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Student</FormLabel>
-                      <Select 
-                        onValueChange={(value) => {
-                          field.onChange(value);
-                          setSelectedStudentId(value);
-                        }} 
-                        value={field.value}
-                      >
-                        <FormControl>
-                          <SelectTrigger data-testid="select-student">
-                            <SelectValue placeholder={studentsLoading ? "Loading students..." : "Select a student"} />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          <div className="px-2 pb-2">
+          <DialogContent className="sm:max-w-lg">
+            {currentStep === 1 ? (
+              <>
+                <DialogHeader>
+                  <DialogTitle>Add Hours to Student Wallet</DialogTitle>
+                  <DialogDescription>
+                    Step 1: Set the monthly hours pool
+                  </DialogDescription>
+                </DialogHeader>
+                <Form {...form}>
+                  <form onSubmit={form.handleSubmit(onStep1Submit)} className="space-y-4">
+                    {/* 1. Student Selector */}
+                    <FormField
+                      control={form.control}
+                      name="studentId"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Student</FormLabel>
+                          <Select 
+                            onValueChange={(value) => {
+                              field.onChange(value);
+                              setSelectedStudentId(value);
+                            }} 
+                            value={field.value}
+                          >
+                            <FormControl>
+                              <SelectTrigger data-testid="select-student">
+                                <SelectValue placeholder={studentsLoading ? "Loading students..." : "Select a student"} />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent>
+                              <div className="px-2 pb-2">
+                                <Input
+                                  placeholder="Search students..."
+                                  value={studentSearchQuery}
+                                  onChange={(e) => setStudentSearchQuery(e.target.value)}
+                                  className="h-8"
+                                  data-testid="input-student-search"
+                                />
+                              </div>
+                              {filteredStudents.length === 0 ? (
+                                <div className="py-6 text-center text-sm text-muted-foreground">
+                                  {studentsLoading ? "Loading..." : "No students found"}
+                                </div>
+                              ) : (
+                                filteredStudents.map((student) => (
+                                  <SelectItem key={student.id} value={student.id}>
+                                    {student.fullName}
+                                  </SelectItem>
+                                ))
+                              )}
+                            </SelectContent>
+                          </Select>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+
+                    {/* 2. Month Selector */}
+                    <FormField
+                      control={form.control}
+                      name="month"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Month</FormLabel>
+                          <Select 
+                            onValueChange={(value) => {
+                              field.onChange(value);
+                              setSelectedMonth(value);
+                            }} 
+                            value={field.value}
+                          >
+                            <FormControl>
+                              <SelectTrigger data-testid="select-month">
+                                <SelectValue placeholder="Select a month" />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent>
+                              {monthOptions.map((option) => (
+                                <SelectItem key={option.value} value={option.value}>
+                                  {option.label}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+
+                    {/* 3. Rollover Summary Line */}
+                    <div className="rounded-md border bg-muted/50 p-3">
+                      <div className="flex items-center gap-2 text-sm">
+                        <CalendarDays className="h-4 w-4 text-muted-foreground" />
+                        <span className="font-medium">Rollover from previous months:</span>
+                        {!selectedStudentId ? (
+                          <span className="text-muted-foreground">Select a student</span>
+                        ) : rolloverLoading ? (
+                          <span className="text-muted-foreground">Loading...</span>
+                        ) : (
+                          <span data-testid="text-rollover-total">
+                            {formatRollover(rolloverData?.totalMinutes || 0)}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* 4. Total Hours Input */}
+                    <FormField
+                      control={form.control}
+                      name="totalHours"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Total hours to add for {currentMonthLabel}</FormLabel>
+                          <FormControl>
                             <Input
-                              placeholder="Search students..."
-                              value={studentSearchQuery}
-                              onChange={(e) => setStudentSearchQuery(e.target.value)}
-                              className="h-8"
-                              data-testid="input-student-search"
+                              type="number"
+                              min={0.25}
+                              step={0.25}
+                              placeholder="1"
+                              data-testid="input-total-hours"
+                              {...field}
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+
+                    {/* 5. Reason (optional) */}
+                    <FormField
+                      control={form.control}
+                      name="reason"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Reason (optional)</FormLabel>
+                          <FormControl>
+                            <Input
+                              placeholder="e.g., Package purchase, bonus hours"
+                              data-testid="input-reason"
+                              {...field}
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+
+                    {/* Step 1 Action Button */}
+                    <DialogFooter>
+                      <Button
+                        type="submit"
+                        disabled={!selectedStudentId || coursesLoading}
+                        className="w-full"
+                        data-testid="button-next-allocate"
+                      >
+                        {coursesLoading ? "Loading courses..." : "Next: Allocate hours"}
+                      </Button>
+                    </DialogFooter>
+                  </form>
+                </Form>
+              </>
+            ) : (
+              <>
+                <DialogHeader>
+                  <DialogTitle>Allocate Hours Across Courses</DialogTitle>
+                  <DialogDescription>
+                    Allocate {step1Data?.totalHours} hours across courses for {selectedStudentName} in {currentMonthLabel}
+                  </DialogDescription>
+                </DialogHeader>
+
+                {/* Remaining Badge */}
+                <div className="flex items-center justify-between">
+                  <Badge 
+                    variant={canSave ? "default" : "secondary"}
+                    className="text-sm"
+                    data-testid="badge-remaining"
+                  >
+                    Remaining to allocate: {remainingToAllocate.toFixed(2)} hours
+                  </Badge>
+                  <div className="flex gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={splitEvenly}
+                      data-testid="button-split-evenly"
+                    >
+                      <Split className="mr-1 h-3 w-3" />
+                      Split evenly
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={clearAllocations}
+                      data-testid="button-clear"
+                    >
+                      <RotateCcw className="mr-1 h-3 w-3" />
+                      Clear
+                    </Button>
+                  </div>
+                </div>
+
+                {/* Course Allocations */}
+                <div className="max-h-80 space-y-3 overflow-y-auto">
+                  {allocations.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center rounded-md border bg-muted/50 p-6 text-center">
+                      <AlertCircle className="mb-2 h-8 w-8 text-muted-foreground" />
+                      <p className="font-medium">No courses found for this student</p>
+                      <p className="text-sm text-muted-foreground">
+                        Enroll the student first, then allocate hours.
+                      </p>
+                    </div>
+                  ) : (
+                    allocations.map((allocation) => (
+                      <div
+                        key={allocation.courseId}
+                        className="rounded-md border p-3 space-y-2"
+                        data-testid={`allocation-row-${allocation.courseId}`}
+                      >
+                        <div className="flex items-center justify-between gap-4">
+                          <div className="flex-1">
+                            <div className="font-medium">{allocation.courseName}</div>
+                            {allocation.courseLevel && (
+                              <div className="text-sm text-muted-foreground">{allocation.courseLevel}</div>
+                            )}
+                          </div>
+                          <div className="w-24">
+                            <Input
+                              type="number"
+                              min={0}
+                              max={step1Data ? remainingToAllocate + allocation.hours : 100}
+                              step={0.25}
+                              value={allocation.hours}
+                              onChange={(e) => updateAllocation(allocation.courseId, parseFloat(e.target.value) || 0)}
+                              placeholder="0"
+                              data-testid={`input-allocation-${allocation.courseId}`}
                             />
                           </div>
-                          {filteredStudents.length === 0 ? (
-                            <div className="py-6 text-center text-sm text-muted-foreground">
-                              {studentsLoading ? "Loading..." : "No students found"}
-                            </div>
-                          ) : (
-                            filteredStudents.map((student) => (
-                              <SelectItem key={student.id} value={student.id}>
-                                {student.fullName}
-                              </SelectItem>
-                            ))
-                          )}
-                        </SelectContent>
-                      </Select>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-
-                {/* 2. Month Selector */}
-                <FormField
-                  control={form.control}
-                  name="month"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Month</FormLabel>
-                      <Select 
-                        onValueChange={(value) => {
-                          field.onChange(value);
-                          setSelectedMonth(value);
-                        }} 
-                        value={field.value}
-                      >
-                        <FormControl>
-                          <SelectTrigger data-testid="select-month">
-                            <SelectValue placeholder="Select a month" />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          {monthOptions.map((option) => (
-                            <SelectItem key={option.value} value={option.value}>
-                              {option.label}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-
-                {/* 3. Rollover Summary Line */}
-                <div className="rounded-md border bg-muted/50 p-3">
-                  <div className="flex items-center gap-2 text-sm">
-                    <CalendarDays className="h-4 w-4 text-muted-foreground" />
-                    <span className="font-medium">Rollover from previous months:</span>
-                    {!selectedStudentId ? (
-                      <span className="text-muted-foreground">Select a student</span>
-                    ) : rolloverLoading ? (
-                      <span className="text-muted-foreground">Loading...</span>
-                    ) : (
-                      <span data-testid="text-rollover-total">
-                        {formatRollover(rolloverData?.totalMinutes || 0)}
-                      </span>
-                    )}
-                  </div>
-
-                  {/* 4. Rollover Breakdown */}
-                  {selectedStudentId && !rolloverLoading && rolloverData && rolloverData.totalMinutes > 0 && (
-                    <div className="mt-3 space-y-2 border-t pt-3">
-                      {rolloverData.breakdown.map((item, index) => (
-                        <div key={index} className="text-sm" data-testid={`rollover-item-${index}`}>
-                          <div className="font-medium">{item.courseName}</div>
-                          <div className="text-muted-foreground">{item.monthRange}</div>
-                          <div className="text-muted-foreground">
-                            Outstanding: {formatMinutes(item.remainingMinutes)}
-                          </div>
                         </div>
-                      ))}
-                    </div>
+                        <Input
+                          placeholder="Note (optional)"
+                          value={allocation.note}
+                          onChange={(e) => updateAllocationNote(allocation.courseId, e.target.value)}
+                          className="text-sm"
+                          data-testid={`input-note-${allocation.courseId}`}
+                        />
+                      </div>
+                    ))
                   )}
                 </div>
 
-                {/* 5. Course Selector */}
-                <FormField
-                  control={form.control}
-                  name="courseId"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Course</FormLabel>
-                      <Select onValueChange={field.onChange} value={field.value}>
-                        <FormControl>
-                          <SelectTrigger data-testid="select-course">
-                            <SelectValue placeholder="Select a course" />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          {courses?.map((course) => (
-                            <SelectItem key={course.id} value={course.id}>
-                              {course.title}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-
-                {/* 6. Hours to Add Input */}
-                <FormField
-                  control={form.control}
-                  name="hours"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Hours to add for {currentMonthLabel}</FormLabel>
-                      <FormControl>
-                        <Input
-                          type="number"
-                          min={0.25}
-                          step={0.25}
-                          placeholder="1"
-                          data-testid="input-hours"
-                          {...field}
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-
-                {/* 7. Reason (optional) */}
-                <FormField
-                  control={form.control}
-                  name="reason"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Reason (optional)</FormLabel>
-                      <FormControl>
-                        <Input
-                          placeholder="e.g., Package purchase, bonus hours"
-                          data-testid="input-reason"
-                          {...field}
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-
-                {/* 8 & 9. Action Buttons */}
-                <DialogFooter className="flex-col gap-2 sm:flex-col">
-                  <Button
-                    type="submit"
-                    disabled={addHoursMutation.isPending}
-                    className="w-full"
-                    data-testid="button-submit-hours"
-                  >
-                    {addHoursMutation.isPending ? "Adding..." : `Add hours for ${currentMonthLabel}`}
-                  </Button>
+                {/* Step 2 Action Buttons */}
+                <DialogFooter className="flex-col gap-2 sm:flex-row">
                   <Button
                     type="button"
                     variant="outline"
-                    onClick={() => setIsDialogOpen(false)}
-                    className="w-full"
-                    data-testid="button-cancel"
+                    onClick={() => setCurrentStep(1)}
+                    data-testid="button-back"
                   >
-                    Cancel
+                    Back
+                  </Button>
+                  <Button
+                    type="button"
+                    disabled={!canSave || allocations.length === 0 || allocateMutation.isPending}
+                    onClick={() => allocateMutation.mutate()}
+                    className="flex-1"
+                    data-testid="button-save-allocation"
+                  >
+                    {allocateMutation.isPending ? "Saving..." : "Save allocation"}
                   </Button>
                 </DialogFooter>
-              </form>
-            </Form>
+              </>
+            )}
           </DialogContent>
         </Dialog>
       </div>
