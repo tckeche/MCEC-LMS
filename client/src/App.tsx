@@ -50,6 +50,7 @@ import AdminStaffApproval from "@/pages/admin/staff-approval";
 import AdminCourses from "@/pages/admin/courses";
 import AdminSettings from "@/pages/admin/settings";
 import SuperAdminUsers from "@/pages/admin/super-admin-users";
+import AdminWallets from "@/pages/admin/wallets";
 import Announcements from "@/pages/announcements";
 
 function LoadingScreen() {
@@ -193,6 +194,7 @@ function ManagerRoutes() {
       <Route path="/manager/overview" component={ManagerDashboard} />
       <Route path="/manager/tutors" component={ManagerTutors} />
       <Route path="/manager/courses" component={ManagerCourses} />
+      <Route path="/manager/wallets" component={AdminWallets} />
       <Route path="/announcements" component={Announcements} />
       <Route component={NotFound} />
     </Switch>
@@ -204,6 +206,7 @@ function AdminRoutes() {
     <Switch>
       <Route path="/" component={AdminDashboard} />
       <Route path="/admin/users" component={AdminUsers} />
+      <Route path="/admin/wallets" component={AdminWallets} />
       <Route path="/admin/invoices" component={AdminInvoices} />
       <Route path="/admin/payroll" component={AdminPayroll} />
       <Route path="/admin/staff-approval" component={AdminStaffApproval} />

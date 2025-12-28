@@ -2,6 +2,7 @@ import { Link, useLocation } from "wouter";
 import {
   BookOpen,
   ClipboardList,
+  Clock,
   GraduationCap,
   Home,
   Users,
@@ -138,9 +139,21 @@ const navItems: NavItem[] = [
     roles: ["manager"],
   },
   {
+    title: "Hours Wallets",
+    url: "/manager/wallets",
+    icon: Clock,
+    roles: ["manager"],
+  },
+  {
     title: "User Management",
     url: "/admin/users",
     icon: UserCog,
+    roles: ["admin"],
+  },
+  {
+    title: "Hours Wallets",
+    url: "/admin/wallets",
+    icon: Clock,
     roles: ["admin"],
   },
   {
