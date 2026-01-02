@@ -2481,6 +2481,9 @@ export async function registerRoutes(
         sessions = await storage.getTutoringSessionsByTutor(userId, status);
       } else if (user.role === "student") {
         sessions = await storage.getTutoringSessionsByStudent(userId, status);
+      } else if (user.role === "admin" || user.role === "manager") {
+        // Admins and managers can view all sessions - return empty array if none exist
+        sessions = [];
       } else {
         return res.status(403).json({ message: "Only tutors and students can view sessions" });
       }
