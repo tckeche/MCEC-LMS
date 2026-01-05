@@ -920,7 +920,7 @@ export async function registerRoutes(
           id: s.id,
           fullName: `${s.firstName || ''} ${s.lastName || ''}`.trim() || s.email,
           email: s.email,
-          phone: s.phone
+          phone: s.phoneNumber || null
         })));
       }
       
@@ -930,7 +930,7 @@ export async function registerRoutes(
         id: s.id,
         fullName: `${s.firstName || ''} ${s.lastName || ''}`.trim() || s.email,
         email: s.email,
-        phone: s.phone
+        phone: s.phoneNumber || null
       })));
     } catch (error) {
       console.error("Error fetching active students:", error);
@@ -2475,7 +2475,7 @@ export async function registerRoutes(
       }
 
       const status = req.query.status as TutoringSessionStatus | undefined;
-      let sessions;
+      let sessions: any[] = [];
       
       if (user.role === "tutor") {
         sessions = await storage.getTutoringSessionsByTutor(userId, status);
