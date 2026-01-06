@@ -10,11 +10,14 @@ import {
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { queryClient, apiRequest } from "@/lib/queryClient";
+import { normalizeAppPath } from "@/lib/navigation";
 import type { Notification } from "@shared/schema";
 import { formatDistanceToNow } from "date-fns";
+import { useLocation } from "wouter";
 
 export function NotificationBell() {
   const [open, setOpen] = useState(false);
+  const [, setLocation] = useLocation();
 
   const { data: notifications = [], isLoading } = useQuery<Notification[]>({
     queryKey: ["/api/notifications"],
@@ -62,7 +65,10 @@ export function NotificationBell() {
       markAsReadMutation.mutate(notification.id);
     }
     if (notification.link) {
-      window.location.href = notification.link;
+      const nextPath = normalizeAppPath(notification.link);
+      if (nextPath) {
+        setLocation(nextPath);
+      }
     }
   };
 

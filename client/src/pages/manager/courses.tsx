@@ -3,6 +3,7 @@ import { BookOpen, Search, Users, GraduationCap } from "lucide-react";
 import { useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
 import {
   Select,
   SelectContent,
@@ -23,6 +24,7 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/empty-state";
 import type { Course, User } from "@shared/schema";
+import { Link } from "wouter";
 
 interface CourseWithTutor extends Course {
   tutor?: User | null;
@@ -71,6 +73,9 @@ export default function ManagerCourses() {
         </h1>
         <p className="mt-1 text-muted-foreground">
           View all courses across the platform.
+        </p>
+        <p className="mt-2 text-sm text-muted-foreground">
+          Select a course to review its tutor, status, and enrollment details.
         </p>
       </div>
 
@@ -177,6 +182,7 @@ export default function ManagerCourses() {
                     <TableHead className="text-center">Enrolled</TableHead>
                     <TableHead className="text-center">Max</TableHead>
                     <TableHead>Status</TableHead>
+                    <TableHead className="text-right">Action</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -230,6 +236,11 @@ export default function ManagerCourses() {
                         <Badge variant={course.isActive ? "default" : "secondary"}>
                           {course.isActive ? "Active" : "Inactive"}
                         </Badge>
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <Button variant="ghost" size="sm" asChild data-testid={`button-view-${course.id}`}>
+                          <Link href={`/manager/courses/${course.id}`}>View</Link>
+                        </Button>
                       </TableCell>
                     </TableRow>
                   ))}

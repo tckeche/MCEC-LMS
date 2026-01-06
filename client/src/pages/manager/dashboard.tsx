@@ -91,8 +91,8 @@ export default function ManagerDashboard() {
             <StatCard
               title="Platform Avg Grade"
               value={
-                data?.stats.averageGrade !== null
-                  ? `${data?.stats.averageGrade}%`
+                typeof data?.stats.averageGrade === "number"
+                  ? `${data.stats.averageGrade}%`
                   : "--"
               }
               icon={<TrendingUp className="h-6 w-6" />}

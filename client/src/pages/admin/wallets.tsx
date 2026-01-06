@@ -339,6 +339,9 @@ export default function AdminWallets() {
         <div>
           <h1 className="text-2xl font-bold" data-testid="text-page-title">Hours Wallets</h1>
           <p className="text-muted-foreground">Manage student tutoring hours</p>
+          <p className="mt-2 text-sm text-muted-foreground">
+            Add a monthly hours pool, then allocate hours across the student’s enrolled courses.
+          </p>
         </div>
         <Dialog open={isDialogOpen} onOpenChange={(open) => {
           if (!open) resetModal();
@@ -356,7 +359,7 @@ export default function AdminWallets() {
                 <DialogHeader>
                   <DialogTitle>Add Hours to Student Wallet</DialogTitle>
                   <DialogDescription>
-                    Step 1: Set the monthly hours pool
+                    Step 1: Set the monthly hours pool. You’ll allocate hours across courses next.
                   </DialogDescription>
                 </DialogHeader>
                 <Form {...form}>
@@ -520,6 +523,9 @@ export default function AdminWallets() {
                     Allocate {step1Data?.totalHours} hours across courses for {selectedStudentName} in {currentMonthLabel}
                   </DialogDescription>
                 </DialogHeader>
+                <p className="text-sm text-muted-foreground">
+                  Tip: The remaining balance must be 0 before you can save the allocation.
+                </p>
 
                 {/* Remaining Badge */}
                 <div className="flex items-center justify-between">

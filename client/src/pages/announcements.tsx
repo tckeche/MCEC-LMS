@@ -118,6 +118,9 @@ export default function Announcements() {
           <p className="mt-1 text-muted-foreground">
             Stay updated with the latest news and updates
           </p>
+          <p className="mt-2 text-sm text-muted-foreground">
+            Use announcements to share time-sensitive updates with students and staff.
+          </p>
         </div>
         {canCreate && (
           <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
@@ -208,7 +211,7 @@ export default function Announcements() {
                               </SelectTrigger>
                             </FormControl>
                             <SelectContent>
-                              {data?.courses.map((course) => (
+                              {data?.courses?.map((course) => (
                                 <SelectItem key={course.id} value={course.id}>
                                   {course.title}
                                 </SelectItem>
