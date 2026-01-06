@@ -772,15 +772,6 @@ export async function registerRoutes(
   // Get active students for tutor enrollment (searchable dropdown)
   app.get('/api/tutor/active-students', isAuthenticated, requireRole("tutor", "admin", "manager"), async (req: Request, res: Response) => {
     try {
-      const dbUser = (req as any).dbUser;
-      
-      // For tutors, only return students in their courses
-      if (dbUser.role === "tutor") {
-        const students = await storage.getActiveStudentsByTutor(dbUser.id);
-        return res.json(students);
-      }
-      
-      // Admin/manager see all active students
       const students = await storage.getActiveStudents();
       res.json(students);
     } catch (error) {
@@ -1372,15 +1363,20 @@ export async function registerRoutes(
       }
       
       let announcements;
+      let courses = [];
       if (user.role === "admin" || user.role === "manager") {
         announcements = await storage.getAllAnnouncements();
+        courses = await storage.getAllCourses();
       } else if (user.role === "student") {
         announcements = await storage.getAnnouncementsForStudent(userId);
+      } else if (user.role === "tutor") {
+        announcements = await storage.getAllAnnouncements();
+        courses = await storage.getCoursesByTutor(userId);
       } else {
         announcements = await storage.getAllAnnouncements();
       }
       
-      res.json(announcements);
+      res.json({ announcements, courses });
     } catch (error) {
       console.error("Error fetching announcements:", error);
       res.status(500).json({ message: "Failed to fetch announcements" });
@@ -1835,20 +1831,56 @@ export async function registerRoutes(
   app.get('/api/manager/dashboard', isAuthenticated, requireRole("manager", "admin"), async (req: Request, res: Response) => {
     try {
       const stats = await storage.getManagerStats();
+      const averageGrade = await storage.getPlatformAverageGrade();
       const allCourses = await storage.getAllCourses();
       const tutors = await storage.getUsersByRole("tutor");
-      const students = await storage.getUsersByRole("student");
+      const tutorPerformance = await Promise.all(
+        tutors.map(async (tutor) => {
+          const tutorCourses = await storage.getCoursesByTutor(tutor.id);
+          const studentIds = new Set<string>();
+
+          for (const course of tutorCourses) {
+            const enrollments = await storage.getEnrollmentsByCourse(course.id);
+            enrollments
+              .filter((enrollment) => enrollment.status === "active")
+              .forEach((enrollment) => studentIds.add(enrollment.studentId));
+          }
+
+          const tutorGrades = await storage.getGradesByTutor(tutor.id);
+          let tutorAverage: number | null = null;
+          if (tutorGrades.length > 0) {
+            let validGradeCount = 0;
+            const totalPercentage = tutorGrades.reduce((sum, g) => {
+              const pointsPossible = g.submission?.assignment?.pointsPossible;
+              if (pointsPossible && pointsPossible > 0) {
+                validGradeCount += 1;
+                return sum + ((g.points || 0) / pointsPossible) * 100;
+              }
+              return sum;
+            }, 0);
+            if (validGradeCount > 0) {
+              tutorAverage = Math.round(totalPercentage / validGradeCount);
+            }
+          }
+
+          return {
+            tutor,
+            coursesCount: tutorCourses.length,
+            studentsCount: studentIds.size,
+            averageGrade: tutorAverage,
+          };
+        })
+      );
       
       res.json({
         stats: {
           totalCourses: stats.totalCourses,
           totalStudents: stats.totalStudents,
           totalTutors: stats.totalTutors,
-          activeEnrollments: 0, // Would need additional query
+          averageGrade,
         },
-        courses: allCourses.slice(0, 10),
-        tutors: tutors.slice(0, 10),
-        students: students.slice(0, 10),
+        recentCourses: allCourses.slice(0, 10),
+        tutorPerformance: tutorPerformance.slice(0, 10),
       });
     } catch (error) {
       console.error("Error fetching manager dashboard:", error);
