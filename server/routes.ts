@@ -772,15 +772,6 @@ export async function registerRoutes(
   // Get active students for tutor enrollment (searchable dropdown)
   app.get('/api/tutor/active-students', isAuthenticated, requireRole("tutor", "admin", "manager"), async (req: Request, res: Response) => {
     try {
-      const dbUser = (req as any).dbUser;
-      
-      // For tutors, only return students in their courses
-      if (dbUser.role === "tutor") {
-        const students = await storage.getActiveStudentsByTutor(dbUser.id);
-        return res.json(students);
-      }
-      
-      // Admin/manager see all active students
       const students = await storage.getActiveStudents();
       res.json(students);
     } catch (error) {
@@ -1372,15 +1363,20 @@ export async function registerRoutes(
       }
       
       let announcements;
+      let courses = [];
       if (user.role === "admin" || user.role === "manager") {
         announcements = await storage.getAllAnnouncements();
+        courses = await storage.getAllCourses();
       } else if (user.role === "student") {
         announcements = await storage.getAnnouncementsForStudent(userId);
+      } else if (user.role === "tutor") {
+        announcements = await storage.getAllAnnouncements();
+        courses = await storage.getCoursesByTutor(userId);
       } else {
         announcements = await storage.getAllAnnouncements();
       }
       
-      res.json(announcements);
+      res.json({ announcements, courses });
     } catch (error) {
       console.error("Error fetching announcements:", error);
       res.status(500).json({ message: "Failed to fetch announcements" });
@@ -1835,20 +1831,56 @@ export async function registerRoutes(
   app.get('/api/manager/dashboard', isAuthenticated, requireRole("manager", "admin"), async (req: Request, res: Response) => {
     try {
       const stats = await storage.getManagerStats();
+      const averageGrade = await storage.getPlatformAverageGrade();
       const allCourses = await storage.getAllCourses();
       const tutors = await storage.getUsersByRole("tutor");
-      const students = await storage.getUsersByRole("student");
+      const tutorPerformance = await Promise.all(
+        tutors.map(async (tutor) => {
+          const tutorCourses = await storage.getCoursesByTutor(tutor.id);
+          const studentIds = new Set<string>();
+
+          for (const course of tutorCourses) {
+            const enrollments = await storage.getEnrollmentsByCourse(course.id);
+            enrollments
+              .filter((enrollment) => enrollment.status === "active")
+              .forEach((enrollment) => studentIds.add(enrollment.studentId));
+          }
+
+          const tutorGrades = await storage.getGradesByTutor(tutor.id);
+          let tutorAverage: number | null = null;
+          if (tutorGrades.length > 0) {
+            let validGradeCount = 0;
+            const totalPercentage = tutorGrades.reduce((sum, g) => {
+              const pointsPossible = g.submission?.assignment?.pointsPossible;
+              if (pointsPossible && pointsPossible > 0) {
+                validGradeCount += 1;
+                return sum + ((g.points || 0) / pointsPossible) * 100;
+              }
+              return sum;
+            }, 0);
+            if (validGradeCount > 0) {
+              tutorAverage = Math.round(totalPercentage / validGradeCount);
+            }
+          }
+
+          return {
+            tutor,
+            coursesCount: tutorCourses.length,
+            studentsCount: studentIds.size,
+            averageGrade: tutorAverage,
+          };
+        })
+      );
       
       res.json({
         stats: {
           totalCourses: stats.totalCourses,
           totalStudents: stats.totalStudents,
           totalTutors: stats.totalTutors,
-          activeEnrollments: 0, // Would need additional query
+          averageGrade,
         },
-        courses: allCourses.slice(0, 10),
-        tutors: tutors.slice(0, 10),
-        students: students.slice(0, 10),
+        recentCourses: allCourses.slice(0, 10),
+        tutorPerformance: tutorPerformance.slice(0, 10),
       });
     } catch (error) {
       console.error("Error fetching manager dashboard:", error);
@@ -4687,6 +4719,412 @@ export async function registerRoutes(
       
     } catch (error) {
       console.error("Error generating payslip PDF:", error);
+      res.status(500).json({ message: "Failed to generate PDF" });
+    }
+  });
+
+  // API Documentation PDF endpoint
+  app.get('/api/docs/pdf', async (req: Request, res: Response) => {
+    try {
+      const doc = new PDFDocument({ size: 'A4', margin: 50 });
+      
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', 'attachment; filename=MCEC_LMS_API_Documentation.pdf');
+      
+      doc.pipe(res);
+      
+      const primaryColor = '#3b82f6';
+      const darkColor = '#1e293b';
+      const grayColor = '#64748b';
+      const lightBg = '#f1f5f9';
+      
+      // Title Page
+      doc.fontSize(28)
+         .font('Helvetica-Bold')
+         .fillColor(primaryColor)
+         .text('MCEC LMS', { align: 'center' });
+      
+      doc.moveDown(0.5);
+      doc.fontSize(20)
+         .fillColor(darkColor)
+         .text('API Documentation', { align: 'center' });
+      
+      doc.moveDown(1);
+      doc.fontSize(12)
+         .font('Helvetica')
+         .fillColor(grayColor)
+         .text(`Generated: ${new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}`, { align: 'center' });
+      
+      doc.moveDown(0.5);
+      doc.text('Version 1.0', { align: 'center' });
+      
+      doc.moveDown(2);
+      doc.fontSize(11)
+         .fillColor(darkColor)
+         .text('This document contains the complete API reference for the MCEC Learning Management System. All endpoints require authentication unless otherwise specified.', { align: 'center', width: 400 });
+      
+      doc.addPage();
+      
+      // API Sections
+      const apiSections = [
+        {
+          title: 'Authentication',
+          endpoints: [
+            { method: 'GET', path: '/api/auth/user', access: 'Authenticated', desc: 'Get current logged-in user info' },
+          ]
+        },
+        {
+          title: 'Staff Proposals',
+          endpoints: [
+            { method: 'POST', path: '/api/staff/proposals', access: 'Authenticated', desc: 'Submit staff registration proposal' },
+            { method: 'GET', path: '/api/staff/proposals/me', access: 'Authenticated', desc: 'Get my pending proposals' },
+            { method: 'GET', path: '/api/staff/proposals', access: 'Admin', desc: 'List all staff proposals' },
+            { method: 'POST', path: '/api/staff/proposals/:id/approve', access: 'Admin', desc: 'Approve a staff proposal' },
+            { method: 'POST', path: '/api/staff/proposals/:id/reject', access: 'Admin', desc: 'Reject a staff proposal' },
+          ]
+        },
+        {
+          title: 'User Management',
+          endpoints: [
+            { method: 'GET', path: '/api/users', access: 'Admin', desc: 'List all users' },
+            { method: 'GET', path: '/api/users/role/:role', access: 'Admin, Manager', desc: 'Get users by role' },
+            { method: 'PATCH', path: '/api/users/:id/role', access: 'Admin', desc: 'Change user role' },
+            { method: 'PATCH', path: '/api/users/:id/status', access: 'Admin', desc: 'Activate/deactivate user' },
+          ]
+        },
+        {
+          title: 'Super Admin',
+          endpoints: [
+            { method: 'GET', path: '/api/super-admin/users', access: 'Super Admin', desc: 'List all users with admin details' },
+            { method: 'PATCH', path: '/api/super-admin/users/:id/admin-level', access: 'Super Admin', desc: 'Change admin level' },
+            { method: 'PATCH', path: '/api/super-admin/users/:id/super-admin', access: 'Super Admin', desc: 'Grant/revoke super admin' },
+            { method: 'PATCH', path: '/api/super-admin/users/:id/role', access: 'Super Admin', desc: 'Change any user role' },
+            { method: 'PATCH', path: '/api/super-admin/users/:id', access: 'Super Admin', desc: 'Update user details' },
+            { method: 'GET', path: '/api/super-admin/audit-logs', access: 'Super Admin', desc: 'Get all audit logs' },
+            { method: 'GET', path: '/api/super-admin/audit-logs/user/:userId', access: 'Super Admin', desc: 'Get user audit logs' },
+          ]
+        },
+        {
+          title: 'Courses',
+          endpoints: [
+            { method: 'GET', path: '/api/courses', access: 'Authenticated', desc: 'List all courses' },
+            { method: 'GET', path: '/api/courses/:id', access: 'Authenticated', desc: 'Get single course details' },
+            { method: 'GET', path: '/api/tutor/courses', access: 'Tutor', desc: 'Get tutor own courses' },
+            { method: 'POST', path: '/api/courses', access: 'Tutor, Admin, Manager', desc: 'Create new course' },
+            { method: 'PATCH', path: '/api/courses/:id', access: 'Tutor, Admin, Manager', desc: 'Update course' },
+            { method: 'DELETE', path: '/api/courses/:id', access: 'Admin, Manager', desc: 'Delete course' },
+          ]
+        },
+        {
+          title: 'Enrollments',
+          endpoints: [
+            { method: 'GET', path: '/api/enrollments/student', access: 'Student', desc: 'Get my enrollments' },
+            { method: 'GET', path: '/api/courses/:courseId/enrollments', access: 'Tutor, Admin, Manager', desc: 'Get course enrollments' },
+            { method: 'POST', path: '/api/enrollments', access: 'Admin, Manager, Tutor', desc: 'Create enrollment' },
+            { method: 'PATCH', path: '/api/enrollments/:id/status', access: 'Admin, Manager, Tutor', desc: 'Update enrollment status' },
+          ]
+        },
+        {
+          title: 'Students',
+          endpoints: [
+            { method: 'GET', path: '/api/students/active', access: 'Tutor, Admin, Manager', desc: 'List active students' },
+            { method: 'GET', path: '/api/students/:studentId/rollover', access: 'Tutor, Admin, Manager', desc: 'Get student rollover hours' },
+            { method: 'GET', path: '/api/students/:studentId/enrolled-courses', access: 'Tutor, Admin, Manager', desc: 'Get student enrolled courses' },
+            { method: 'GET', path: '/api/tutor/active-students', access: 'Tutor, Admin, Manager', desc: 'Get tutor active students' },
+            { method: 'GET', path: '/api/tutor/students', access: 'Tutor', desc: 'Get all students for tutor' },
+          ]
+        },
+        {
+          title: 'Assignments',
+          endpoints: [
+            { method: 'GET', path: '/api/assignments/student', access: 'Student', desc: 'Get my assignments' },
+            { method: 'GET', path: '/api/assignments/:id', access: 'Authenticated', desc: 'Get assignment details' },
+            { method: 'GET', path: '/api/courses/:courseId/assignments', access: 'Authenticated', desc: 'Get course assignments' },
+            { method: 'POST', path: '/api/assignments', access: 'Tutor, Admin, Manager', desc: 'Create assignment' },
+            { method: 'PATCH', path: '/api/assignments/:id', access: 'Tutor, Admin, Manager', desc: 'Update assignment' },
+            { method: 'DELETE', path: '/api/assignments/:id', access: 'Tutor, Admin, Manager', desc: 'Delete assignment' },
+          ]
+        },
+        {
+          title: 'Submissions',
+          endpoints: [
+            { method: 'GET', path: '/api/submissions/student', access: 'Student', desc: 'Get my submissions' },
+            { method: 'GET', path: '/api/assignments/:assignmentId/submissions', access: 'Tutor, Admin, Manager', desc: 'Get assignment submissions' },
+            { method: 'POST', path: '/api/submissions', access: 'Student', desc: 'Submit assignment' },
+            { method: 'PATCH', path: '/api/submissions/:id', access: 'Tutor, Admin, Manager', desc: 'Update/grade submission' },
+          ]
+        },
+        {
+          title: 'Grades',
+          endpoints: [
+            { method: 'GET', path: '/api/grades/student', access: 'Student', desc: 'Get my grades' },
+            { method: 'GET', path: '/api/student/grades', access: 'Student', desc: 'Alternative: Get my grades' },
+            { method: 'GET', path: '/api/grades/tutor', access: 'Tutor', desc: 'Get grades for tutor students' },
+            { method: 'POST', path: '/api/grades', access: 'Tutor, Admin, Manager', desc: 'Create grade' },
+            { method: 'PATCH', path: '/api/grades/:id', access: 'Tutor, Admin, Manager', desc: 'Update grade' },
+          ]
+        },
+        {
+          title: 'Announcements',
+          endpoints: [
+            { method: 'GET', path: '/api/announcements', access: 'Authenticated', desc: 'Get all announcements' },
+            { method: 'GET', path: '/api/courses/:courseId/announcements', access: 'Authenticated', desc: 'Get course announcements' },
+            { method: 'POST', path: '/api/announcements', access: 'Tutor, Admin, Manager', desc: 'Create announcement' },
+            { method: 'PATCH', path: '/api/announcements/:id', access: 'Tutor, Admin, Manager', desc: 'Update announcement' },
+            { method: 'DELETE', path: '/api/announcements/:id', access: 'Tutor, Admin, Manager', desc: 'Delete announcement' },
+          ]
+        },
+        {
+          title: 'Notifications',
+          endpoints: [
+            { method: 'GET', path: '/api/notifications', access: 'Authenticated', desc: 'Get my notifications' },
+            { method: 'GET', path: '/api/notifications/unread-count', access: 'Authenticated', desc: 'Get unread count' },
+            { method: 'PATCH', path: '/api/notifications/:id/read', access: 'Authenticated', desc: 'Mark notification as read' },
+            { method: 'PATCH', path: '/api/notifications/read-all', access: 'Authenticated', desc: 'Mark all as read' },
+            { method: 'DELETE', path: '/api/notifications/:id', access: 'Authenticated', desc: 'Delete notification' },
+          ]
+        },
+        {
+          title: 'Parent-Child Relationships',
+          endpoints: [
+            { method: 'GET', path: '/api/parent/children', access: 'Parent', desc: 'Get my linked children' },
+            { method: 'GET', path: '/api/parent/children/:childId/sessions', access: 'Parent', desc: 'Get child tutoring sessions' },
+            { method: 'POST', path: '/api/parent-children', access: 'Admin, Manager', desc: 'Link parent to child' },
+            { method: 'DELETE', path: '/api/parent-children/:id', access: 'Admin, Manager', desc: 'Remove parent-child link' },
+          ]
+        },
+        {
+          title: 'Tutor Availability',
+          endpoints: [
+            { method: 'GET', path: '/api/tutor/availability', access: 'Tutor', desc: 'Get my availability slots' },
+            { method: 'GET', path: '/api/tutors/:tutorId/availability', access: 'Authenticated', desc: 'Get tutor availability' },
+            { method: 'POST', path: '/api/tutor/availability', access: 'Tutor', desc: 'Create availability slot' },
+            { method: 'PATCH', path: '/api/tutor/availability/:id', access: 'Tutor', desc: 'Update availability' },
+            { method: 'DELETE', path: '/api/tutor/availability/:id', access: 'Tutor', desc: 'Delete availability' },
+          ]
+        },
+        {
+          title: 'Session Proposals',
+          endpoints: [
+            { method: 'GET', path: '/api/session-proposals/student', access: 'Student', desc: 'Get my session proposals' },
+            { method: 'GET', path: '/api/session-proposals/tutor', access: 'Tutor', desc: 'Get proposals for my sessions' },
+            { method: 'POST', path: '/api/session-proposals', access: 'Student', desc: 'Create session proposal' },
+            { method: 'PATCH', path: '/api/session-proposals/:id/approve', access: 'Tutor', desc: 'Approve session proposal' },
+            { method: 'PATCH', path: '/api/session-proposals/:id/reject', access: 'Tutor', desc: 'Reject session proposal' },
+          ]
+        },
+        {
+          title: 'Tutoring Sessions',
+          endpoints: [
+            { method: 'GET', path: '/api/tutoring-sessions', access: 'Authenticated', desc: 'Get all sessions (filtered by role)' },
+            { method: 'GET', path: '/api/tutoring-sessions/:id', access: 'Authenticated', desc: 'Get session details' },
+            { method: 'GET', path: '/api/tutor/sessions', access: 'Tutor', desc: 'Get my tutoring sessions' },
+            { method: 'POST', path: '/api/tutoring-sessions/:id/join', access: 'Authenticated', desc: 'Join a session' },
+            { method: 'POST', path: '/api/tutoring-sessions/:id/end', access: 'Tutor', desc: 'End a session' },
+            { method: 'PATCH', path: '/api/tutoring-sessions/:id/postpone', access: 'Authenticated', desc: 'Postpone session' },
+            { method: 'PATCH', path: '/api/tutoring-sessions/:id/cancel', access: 'Authenticated', desc: 'Cancel session' },
+          ]
+        },
+        {
+          title: 'Hours Wallet (Billing)',
+          endpoints: [
+            { method: 'GET', path: '/api/hour-wallets', access: 'Admin, Manager', desc: 'Get all hour wallets' },
+            { method: 'GET', path: '/api/hour-wallets/student', access: 'Student', desc: 'Get my hour wallets' },
+            { method: 'GET', path: '/api/hour-wallets/:studentId/:courseId', access: 'Manager, Admin, Tutor', desc: 'Get specific wallet' },
+            { method: 'GET', path: '/api/hour-wallets/course/:courseId', access: 'Manager, Admin, Tutor', desc: 'Get wallets by course' },
+            { method: 'POST', path: '/api/hour-wallets', access: 'Manager, Admin', desc: 'Create hour wallet' },
+            { method: 'POST', path: '/api/hour-wallets/top-up', access: 'Admin, Manager, Tutor', desc: 'Add hours to wallet' },
+            { method: 'POST', path: '/api/wallets/allocate-month', access: 'Tutor, Admin, Manager', desc: 'Allocate monthly hours' },
+          ]
+        },
+        {
+          title: 'Invoices',
+          endpoints: [
+            { method: 'GET', path: '/api/invoices', access: 'Admin, Manager, Parent', desc: 'List invoices' },
+            { method: 'GET', path: '/api/invoices/:id', access: 'Authenticated', desc: 'Get invoice details' },
+            { method: 'GET', path: '/api/invoices/:id/line-items', access: 'Authenticated', desc: 'Get invoice line items' },
+            { method: 'GET', path: '/api/invoices/:id/pdf', access: 'Authenticated', desc: 'Download invoice PDF' },
+            { method: 'GET', path: '/api/invoices/student/:studentId', access: 'Authenticated', desc: 'Get invoices for student' },
+            { method: 'POST', path: '/api/invoices', access: 'Admin, Manager', desc: 'Create invoice' },
+            { method: 'PATCH', path: '/api/invoices/:id', access: 'Admin, Manager', desc: 'Update invoice' },
+            { method: 'POST', path: '/api/invoices/:id/send', access: 'Admin, Manager', desc: 'Send invoice to parent' },
+          ]
+        },
+        {
+          title: 'Payments',
+          endpoints: [
+            { method: 'GET', path: '/api/payments/pending', access: 'Admin, Manager', desc: 'Get pending payments' },
+            { method: 'GET', path: '/api/payments/:id', access: 'Authenticated', desc: 'Get payment details' },
+            { method: 'GET', path: '/api/invoices/:id/payments', access: 'Authenticated', desc: 'Get payments for invoice' },
+            { method: 'POST', path: '/api/invoices/:id/payments', access: 'Parent', desc: 'Submit payment' },
+            { method: 'PATCH', path: '/api/payments/:id/verify', access: 'Admin, Manager', desc: 'Verify payment' },
+            { method: 'PATCH', path: '/api/payments/:id/reject', access: 'Admin, Manager', desc: 'Reject payment' },
+          ]
+        },
+        {
+          title: 'Account Standing',
+          endpoints: [
+            { method: 'GET', path: '/api/account/standing', access: 'Authenticated', desc: 'Get my account standing' },
+            { method: 'GET', path: '/api/account/standing/:parentId', access: 'Admin, Manager', desc: 'Get parent account standing' },
+          ]
+        },
+        {
+          title: 'Tutor Payouts',
+          endpoints: [
+            { method: 'GET', path: '/api/payouts', access: 'Admin, Manager', desc: 'List all payouts' },
+            { method: 'GET', path: '/api/tutor/payouts', access: 'Tutor', desc: 'Get my payouts' },
+            { method: 'GET', path: '/api/payouts/:id', access: 'Authenticated', desc: 'Get payout details' },
+            { method: 'GET', path: '/api/payouts/:id/lines', access: 'Authenticated', desc: 'Get payout line items' },
+            { method: 'GET', path: '/api/payouts/:id/pdf', access: 'Authenticated', desc: 'Download payslip PDF' },
+            { method: 'POST', path: '/api/payouts', access: 'Admin, Manager', desc: 'Create payout' },
+            { method: 'PATCH', path: '/api/payouts/:id', access: 'Admin, Manager', desc: 'Update payout' },
+            { method: 'POST', path: '/api/payouts/:id/lines', access: 'Admin, Manager', desc: 'Add payout line item' },
+            { method: 'POST', path: '/api/payouts/:id/flags', access: 'Admin, Manager', desc: 'Add payout flag' },
+            { method: 'PATCH', path: '/api/payouts/:payoutId/flags/:flagId', access: 'Admin, Manager', desc: 'Update payout flag' },
+          ]
+        },
+        {
+          title: 'Dashboard Stats',
+          endpoints: [
+            { method: 'GET', path: '/api/stats/admin', access: 'Admin', desc: 'Admin dashboard statistics' },
+            { method: 'GET', path: '/api/stats/manager', access: 'Manager', desc: 'Manager dashboard statistics' },
+            { method: 'GET', path: '/api/stats/tutor', access: 'Tutor', desc: 'Tutor dashboard statistics' },
+            { method: 'GET', path: '/api/stats/student', access: 'Student', desc: 'Student dashboard statistics' },
+            { method: 'GET', path: '/api/admin/dashboard', access: 'Admin', desc: 'Full admin dashboard data' },
+            { method: 'GET', path: '/api/manager/dashboard', access: 'Manager', desc: 'Full manager dashboard data' },
+            { method: 'GET', path: '/api/tutor/dashboard', access: 'Tutor', desc: 'Full tutor dashboard data' },
+            { method: 'GET', path: '/api/student/dashboard', access: 'Student', desc: 'Full student dashboard data' },
+            { method: 'GET', path: '/api/parent/dashboard', access: 'Parent', desc: 'Full parent dashboard data' },
+          ]
+        },
+        {
+          title: 'Debug (Admin Only)',
+          endpoints: [
+            { method: 'GET', path: '/api/debug/courses', access: 'Admin', desc: 'Course consistency check' },
+            { method: 'GET', path: '/api/docs/pdf', access: 'Public', desc: 'Download API documentation PDF' },
+          ]
+        },
+      ];
+      
+      let yPos = 50;
+      
+      const methodColors: Record<string, string> = {
+        'GET': '#22c55e',
+        'POST': '#3b82f6', 
+        'PATCH': '#f59e0b',
+        'DELETE': '#ef4444',
+        'PUT': '#8b5cf6',
+      };
+      
+      for (const section of apiSections) {
+        if (yPos > 680) {
+          doc.addPage();
+          yPos = 50;
+        }
+        
+        doc.fontSize(14)
+           .font('Helvetica-Bold')
+           .fillColor(primaryColor)
+           .text(section.title, 50, yPos);
+        
+        yPos += 25;
+        
+        for (const endpoint of section.endpoints) {
+          if (yPos > 720) {
+            doc.addPage();
+            yPos = 50;
+          }
+          
+          const methodColor = methodColors[endpoint.method] || grayColor;
+          
+          doc.fontSize(9)
+             .font('Helvetica-Bold')
+             .fillColor(methodColor)
+             .text(endpoint.method.padEnd(7), 50, yPos);
+          
+          doc.font('Helvetica')
+             .fillColor(darkColor)
+             .text(endpoint.path, 95, yPos, { width: 250 });
+          
+          doc.fillColor(grayColor)
+             .fontSize(8)
+             .text(endpoint.access, 350, yPos, { width: 80 });
+          
+          doc.fillColor(darkColor)
+             .fontSize(8)
+             .text(endpoint.desc, 430, yPos, { width: 120 });
+          
+          yPos += 18;
+        }
+        
+        yPos += 15;
+      }
+      
+      doc.addPage();
+      
+      doc.fontSize(16)
+         .font('Helvetica-Bold')
+         .fillColor(primaryColor)
+         .text('Access Levels', 50, 50);
+      
+      doc.moveDown(1);
+      
+      const accessLevels = [
+        { level: 'Public', desc: 'No authentication required' },
+        { level: 'Authenticated', desc: 'Any logged-in user' },
+        { level: 'Student', desc: 'Users with student role' },
+        { level: 'Parent', desc: 'Users with parent role' },
+        { level: 'Tutor', desc: 'Users with tutor role' },
+        { level: 'Manager', desc: 'Users with manager role' },
+        { level: 'Admin', desc: 'Users with admin role' },
+        { level: 'Super Admin', desc: 'Users with isSuperAdmin flag' },
+      ];
+      
+      yPos = 90;
+      for (const al of accessLevels) {
+        doc.fontSize(10)
+           .font('Helvetica-Bold')
+           .fillColor(darkColor)
+           .text(al.level, 50, yPos, { continued: true })
+           .font('Helvetica')
+           .fillColor(grayColor)
+           .text(`: ${al.desc}`);
+        yPos += 20;
+      }
+      
+      doc.moveDown(2);
+      doc.fontSize(16)
+         .font('Helvetica-Bold')
+         .fillColor(primaryColor)
+         .text('Notes');
+      
+      doc.moveDown(0.5);
+      doc.fontSize(10)
+         .font('Helvetica')
+         .fillColor(darkColor)
+         .text('1. All endpoints return JSON responses unless specified (e.g., PDF downloads).')
+         .moveDown(0.3)
+         .text('2. Authentication is via session cookies managed by Passport.js.')
+         .moveDown(0.3)
+         .text('3. Error responses follow format: { "message": "Error description" }')
+         .moveDown(0.3)
+         .text('4. Timestamps are in ISO 8601 format.')
+         .moveDown(0.3)
+         .text('5. IDs are UUIDs.')
+         .moveDown(0.3)
+         .text('6. Course lookups support both ID and title (case-insensitive fallback).');
+      
+      const footerY = 750;
+      doc.fontSize(9)
+         .font('Helvetica')
+         .fillColor(grayColor)
+         .text('MCEC Learning Management System - API Documentation', 50, footerY, { align: 'center', width: 495 })
+         .text('Confidential - For Internal Use Only', 50, footerY + 12, { align: 'center', width: 495 });
+      
+      doc.end();
+      
+    } catch (error) {
+      console.error("Error generating API docs PDF:", error);
       res.status(500).json({ message: "Failed to generate PDF" });
     }
   });

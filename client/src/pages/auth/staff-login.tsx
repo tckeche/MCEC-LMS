@@ -16,6 +16,7 @@ import { Link, useLocation } from "wouter";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { useToast } from "@/hooks/use-toast";
 import { queryClient } from "@/lib/queryClient";
+import { normalizeAppPath } from "@/lib/navigation";
 import mcecLogo from "@assets/MCEC_Transparent_Logo_1765615854771.jpg";
 
 
@@ -73,7 +74,8 @@ export default function StaffLogin() {
         description: "Login successful!",
       });
       
-      window.location.href = data.redirect || "/";
+      const nextPath = normalizeAppPath(data.redirect) || "/";
+      setLocation(nextPath);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to login";
       setError(message);

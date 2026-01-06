@@ -1,0 +1,309 @@
+{
+  "summary": {
+    "baseUrl": "https://mcec-lms--tckeche.replit.app",
+    "login": {
+      "didLogin": true,
+      "note": "Login attempted"
+    },
+    "crawl": {
+      "pagesVisited": 10,
+      "discoveredPages": [
+        "https://mcec-lms--tckeche.replit.app/",
+        "https://mcec-lms--tckeche.replit.app/admin/users",
+        "https://mcec-lms--tckeche.replit.app/admin/wallets",
+        "https://mcec-lms--tckeche.replit.app/admin/invoices",
+        "https://mcec-lms--tckeche.replit.app/admin/payroll",
+        "https://mcec-lms--tckeche.replit.app/admin/staff-approval",
+        "https://mcec-lms--tckeche.replit.app/admin/courses",
+        "https://mcec-lms--tckeche.replit.app/announcements",
+        "https://mcec-lms--tckeche.replit.app/admin/settings",
+        "https://mcec-lms--tckeche.replit.app/admin/super-admin"
+      ]
+    },
+    "totals": {
+      "apisCaptured": 23,
+      "apisOk": 23,
+      "apisWithIssues": 0
+    },
+    "generatedAt": "2026-01-06T22:03:03.291Z"
+  },
+  "results": [
+    {
+      "source": "ui",
+      "method": "GET",
+      "path": "/api/auth/user",
+      "url": "https://mcec-lms--tckeche.replit.app/api/auth/user",
+      "status": 200,
+      "ms": 185,
+      "ok": true,
+      "contentType": "application/json; charset=utf-8",
+      "jsonOk": true,
+      "expectedStatus": null
+    },
+    {
+      "source": "ui",
+      "method": "GET",
+      "path": "/api/auth/dev-status",
+      "url": "https://mcec-lms--tckeche.replit.app/api/auth/dev-status",
+      "status": 200,
+      "ms": 103,
+      "ok": true,
+      "contentType": "application/json; charset=utf-8",
+      "jsonOk": true,
+      "expectedStatus": null
+    },
+    {
+      "source": "ui",
+      "method": "POST",
+      "path": "/api/auth/dev/staff-login",
+      "url": "https://mcec-lms--tckeche.replit.app/api/auth/dev/staff-login",
+      "status": 200,
+      "ms": 230,
+      "ok": true,
+      "contentType": "application/json; charset=utf-8",
+      "jsonOk": true,
+      "expectedStatus": null
+    },
+    {
+      "source": "ui",
+      "method": "GET",
+      "path": "/api/notifications",
+      "url": "https://mcec-lms--tckeche.replit.app/api/notifications",
+      "status": 200,
+      "ms": 143,
+      "ok": true,
+      "contentType": "application/json; charset=utf-8",
+      "jsonOk": true,
+      "expectedStatus": null
+    },
+    {
+      "source": "ui",
+      "method": "GET",
+      "path": "/api/notifications/unread-count",
+      "url": "https://mcec-lms--tckeche.replit.app/api/notifications/unread-count",
+      "status": 200,
+      "ms": 140,
+      "ok": true,
+      "contentType": "application/json; charset=utf-8",
+      "jsonOk": true,
+      "expectedStatus": null
+    },
+    {
+      "source": "ui",
+      "method": "GET",
+      "path": "/api/admin/dashboard",
+      "url": "https://mcec-lms--tckeche.replit.app/api/admin/dashboard",
+      "status": 200,
+      "ms": 217,
+      "ok": true,
+      "contentType": "application/json; charset=utf-8",
+      "jsonOk": true,
+      "expectedStatus": null
+    },
+    {
+      "source": "ui",
+      "method": "GET",
+      "path": "/api/admin/users",
+      "url": "https://mcec-lms--tckeche.replit.app/api/admin/users",
+      "status": 200,
+      "ms": 76,
+      "ok": true,
+      "contentType": "text/html; charset=UTF-8",
+      "jsonOk": null,
+      "expectedStatus": null
+    },
+    {
+      "source": "ui",
+      "method": "GET",
+      "path": "/api/hour-wallets",
+      "url": "https://mcec-lms--tckeche.replit.app/api/hour-wallets",
+      "status": 200,
+      "ms": 175,
+      "ok": true,
+      "contentType": "application/json; charset=utf-8",
+      "jsonOk": true,
+      "expectedStatus": null
+    },
+    {
+      "source": "ui",
+      "method": "GET",
+      "path": "/api/students/active",
+      "url": "https://mcec-lms--tckeche.replit.app/api/students/active",
+      "status": 200,
+      "ms": 171,
+      "ok": true,
+      "contentType": "application/json; charset=utf-8",
+      "jsonOk": true,
+      "expectedStatus": null
+    },
+    {
+      "source": "ui",
+      "method": "GET",
+      "path": "/api/invoices",
+      "url": "https://mcec-lms--tckeche.replit.app/api/invoices",
+      "status": 200,
+      "ms": 168,
+      "ok": true,
+      "contentType": "application/json; charset=utf-8",
+      "jsonOk": true,
+      "expectedStatus": null
+    },
+    {
+      "source": "ui",
+      "method": "GET",
+      "path": "/api/payouts",
+      "url": "https://mcec-lms--tckeche.replit.app/api/payouts",
+      "status": 200,
+      "ms": 167,
+      "ok": true,
+      "contentType": "application/json; charset=utf-8",
+      "jsonOk": true,
+      "expectedStatus": null
+    },
+    {
+      "source": "ui",
+      "method": "GET",
+      "path": "/api/staff/proposals",
+      "url": "https://mcec-lms--tckeche.replit.app/api/staff/proposals",
+      "status": 200,
+      "ms": 173,
+      "ok": true,
+      "contentType": "application/json; charset=utf-8",
+      "jsonOk": true,
+      "expectedStatus": null
+    },
+    {
+      "source": "ui",
+      "method": "GET",
+      "path": "/api/courses",
+      "url": "https://mcec-lms--tckeche.replit.app/api/courses",
+      "status": 200,
+      "ms": 151,
+      "ok": true,
+      "contentType": "application/json; charset=utf-8",
+      "jsonOk": true,
+      "expectedStatus": null
+    },
+    {
+      "source": "ui",
+      "method": "GET",
+      "path": "/api/announcements",
+      "url": "https://mcec-lms--tckeche.replit.app/api/announcements",
+      "status": 200,
+      "ms": 209,
+      "ok": true,
+      "contentType": "application/json; charset=utf-8",
+      "jsonOk": true,
+      "expectedStatus": null
+    },
+    {
+      "source": "ui",
+      "method": "GET",
+      "path": "/api/super-admin/users",
+      "url": "https://mcec-lms--tckeche.replit.app/api/super-admin/users",
+      "status": 200,
+      "ms": 180,
+      "ok": true,
+      "contentType": "application/json; charset=utf-8",
+      "jsonOk": true,
+      "expectedStatus": null
+    },
+    {
+      "source": "ui",
+      "method": "GET",
+      "path": "/api/super-admin/audit-logs",
+      "url": "https://mcec-lms--tckeche.replit.app/api/super-admin/audit-logs",
+      "status": 200,
+      "ms": 184,
+      "ok": true,
+      "contentType": "application/json; charset=utf-8",
+      "jsonOk": true,
+      "expectedStatus": null
+    },
+    {
+      "source": "manifest",
+      "method": "GET",
+      "path": "/api/health",
+      "url": "https://mcec-lms--tckeche.replit.app/api/health",
+      "status": 200,
+      "ms": 86,
+      "ok": true,
+      "contentType": "text/html; charset=UTF-8",
+      "jsonOk": null,
+      "expectedStatus": null
+    },
+    {
+      "source": "manifest",
+      "method": "GET",
+      "path": "/api/users/me",
+      "url": "https://mcec-lms--tckeche.replit.app/api/users/me",
+      "status": 200,
+      "ms": 83,
+      "ok": true,
+      "contentType": "text/html; charset=UTF-8",
+      "jsonOk": null,
+      "expectedStatus": null
+    },
+    {
+      "source": "manifest",
+      "method": "GET",
+      "path": "/api/roles",
+      "url": "https://mcec-lms--tckeche.replit.app/api/roles",
+      "status": 200,
+      "ms": 83,
+      "ok": true,
+      "contentType": "text/html; charset=UTF-8",
+      "jsonOk": null,
+      "expectedStatus": null
+    },
+    {
+      "source": "manifest",
+      "method": "GET",
+      "path": "/api/enrollments",
+      "url": "https://mcec-lms--tckeche.replit.app/api/enrollments",
+      "status": 200,
+      "ms": 74,
+      "ok": true,
+      "contentType": "text/html; charset=UTF-8",
+      "jsonOk": null,
+      "expectedStatus": null
+    },
+    {
+      "source": "manifest",
+      "method": "GET",
+      "path": "/api/tutoring-sessions",
+      "url": "https://mcec-lms--tckeche.replit.app/api/tutoring-sessions",
+      "status": 200,
+      "ms": 147,
+      "ok": true,
+      "contentType": "application/json; charset=utf-8",
+      "jsonOk": true,
+      "expectedStatus": null
+    },
+    {
+      "source": "manifest",
+      "method": "GET",
+      "path": "/api/assignments",
+      "url": "https://mcec-lms--tckeche.replit.app/api/assignments",
+      "status": 200,
+      "ms": 78,
+      "ok": true,
+      "contentType": "text/html; charset=UTF-8",
+      "jsonOk": null,
+      "expectedStatus": null
+    },
+    {
+      "source": "manifest",
+      "method": "GET",
+      "path": "/api/submissions",
+      "url": "https://mcec-lms--tckeche.replit.app/api/submissions",
+      "status": 200,
+      "ms": 82,
+      "ok": true,
+      "contentType": "text/html; charset=UTF-8",
+      "jsonOk": null,
+      "expectedStatus": null
+    }
+  ],
+  "issues": []
+}
