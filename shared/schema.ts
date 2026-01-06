@@ -301,6 +301,50 @@ export const notifications = pgTable("notifications", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
+// Chat system tables (Direct Messages)
+export const chatThreads = pgTable("chat_threads", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const chatParticipants = pgTable(
+  "chat_participants",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    threadId: varchar("thread_id")
+      .notNull()
+      .references(() => chatThreads.id, { onDelete: "cascade" }),
+    userId: varchar("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at").defaultNow(),
+  },
+  (table) => [
+    index("IDX_chat_participants_thread").on(table.threadId),
+    index("IDX_chat_participants_user").on(table.userId),
+  ],
+);
+
+export const chatMessages = pgTable(
+  "chat_messages",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    threadId: varchar("thread_id")
+      .notNull()
+      .references(() => chatThreads.id, { onDelete: "cascade" }),
+    senderId: varchar("sender_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    content: text("content").notNull(),
+    createdAt: timestamp("created_at").defaultNow(),
+  },
+  (table) => [
+    index("IDX_chat_messages_thread_created").on(table.threadId, table.createdAt),
+    index("IDX_chat_messages_sender").on(table.senderId),
+  ],
+);
+
 // ==========================================
 // SCHEDULING SYSTEM TABLES
 // ==========================================
@@ -560,6 +604,8 @@ export const usersRelations = relations(users, ({ many }) => ({
   grades: many(grades),
   announcements: many(announcements),
   notifications: many(notifications),
+  chatParticipants: many(chatParticipants),
+  chatMessages: many(chatMessages),
   parentOf: many(parentChildren, { relationName: "parent" }),
   childOf: many(parentChildren, { relationName: "child" }),
 }));
@@ -643,6 +689,34 @@ export const announcementsRelations = relations(announcements, ({ one }) => ({
 export const notificationsRelations = relations(notifications, ({ one }) => ({
   user: one(users, {
     fields: [notifications.userId],
+    references: [users.id],
+  }),
+}));
+
+// Chat system relations
+export const chatThreadsRelations = relations(chatThreads, ({ many }) => ({
+  participants: many(chatParticipants),
+  messages: many(chatMessages),
+}));
+
+export const chatParticipantsRelations = relations(chatParticipants, ({ one }) => ({
+  thread: one(chatThreads, {
+    fields: [chatParticipants.threadId],
+    references: [chatThreads.id],
+  }),
+  user: one(users, {
+    fields: [chatParticipants.userId],
+    references: [users.id],
+  }),
+}));
+
+export const chatMessagesRelations = relations(chatMessages, ({ one }) => ({
+  thread: one(chatThreads, {
+    fields: [chatMessages.threadId],
+    references: [chatThreads.id],
+  }),
+  sender: one(users, {
+    fields: [chatMessages.senderId],
     references: [users.id],
   }),
 }));
@@ -866,6 +940,11 @@ export const insertNotificationSchema = createInsertSchema(notifications).omit({
   createdAt: true,
 });
 
+export const insertChatMessageSchema = createInsertSchema(chatMessages).omit({
+  id: true,
+  createdAt: true,
+});
+
 // Scheduling system insert schemas
 export const insertTutorAvailabilitySchema = createInsertSchema(tutorAvailability).omit({
   id: true,
@@ -923,6 +1002,12 @@ export type Notification = typeof notifications.$inferSelect;
 export type InsertNotification = z.infer<typeof insertNotificationSchema>;
 
 export type NotificationType = "grade_posted" | "assignment_due" | "announcement" | "enrollment" | "submission" | "system";
+
+export type ChatThread = typeof chatThreads.$inferSelect;
+export type ChatParticipant = typeof chatParticipants.$inferSelect;
+export type ChatMessage = typeof chatMessages.$inferSelect;
+export type InsertChatMessage = z.infer<typeof insertChatMessageSchema>;
+export type ChatUserSummary = Pick<User, "id" | "firstName" | "lastName" | "email" | "role" | "profileImageUrl">;
 
 // Extended types for frontend use
 export type CourseWithTutor = Course & {

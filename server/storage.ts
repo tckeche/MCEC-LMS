@@ -9,6 +9,9 @@ import {
   announcements,
   parentChildren,
   notifications,
+  chatThreads,
+  chatParticipants,
+  chatMessages,
   tutorAvailability,
   sessionProposals,
   tutoringSessions,
@@ -40,6 +43,10 @@ import {
   type InsertParentChild,
   type Notification,
   type InsertNotification,
+  type ChatThread,
+  type ChatMessage,
+  type InsertChatMessage,
+  type ChatUserSummary,
   type CourseWithTutor,
   type CourseWithEnrollmentCount,
   type EnrollmentWithDetails,
@@ -95,7 +102,7 @@ import {
   type AuditLogWithDetails,
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, and, desc, count, sql, inArray, or, gte, lte, ne } from "drizzle-orm";
+import { eq, and, desc, count, sql, inArray, or, gte, lte, ne, lt, asc } from "drizzle-orm";
 
 export interface IStorage {
   // User operations (mandatory for Replit Auth)
@@ -196,6 +203,15 @@ export interface IStorage {
   markAllNotificationsAsRead(userId: string): Promise<void>;
   deleteNotification(id: string, userId: string): Promise<boolean>;
   
+  // Chat operations (Direct Messages)
+  getChatUsers(userId: string): Promise<ChatUserSummary[]>;
+  getChatThreadsByUser(userId: string): Promise<Array<{ thread: ChatThread; participants: ChatUserSummary[]; lastMessage?: ChatMessage }>>;
+  getChatMessages(threadId: string): Promise<ChatMessage[]>;
+  createOrGetChatThread(userId: string, otherUserId: string): Promise<ChatThread>;
+  isChatParticipant(threadId: string, userId: string): Promise<boolean>;
+  createChatMessage(message: InsertChatMessage): Promise<ChatMessage>;
+  deleteChatMessagesBefore(cutoff: Date): Promise<number>;
+
   // Helper to get enrolled students for a course (for notifications)
   getEnrolledStudentIds(courseId: string): Promise<string[]>;
   
@@ -1188,6 +1204,162 @@ export class DatabaseStorage implements IStorage {
       .where(and(eq(notifications.id, id), eq(notifications.userId, userId)))
       .returning();
     return result.length > 0;
+  }
+
+  // Chat operations (Direct Messages)
+  async getChatUsers(userId: string): Promise<ChatUserSummary[]> {
+    return db
+      .select({
+        id: users.id,
+        firstName: users.firstName,
+        lastName: users.lastName,
+        email: users.email,
+        role: users.role,
+        profileImageUrl: users.profileImageUrl,
+      })
+      .from(users)
+      .where(and(
+        ne(users.id, userId),
+        eq(users.isActive, true),
+        eq(users.status, "active")
+      ))
+      .orderBy(users.firstName, users.lastName);
+  }
+
+  async getChatThreadsByUser(
+    userId: string,
+  ): Promise<Array<{ thread: ChatThread; participants: ChatUserSummary[]; lastMessage?: ChatMessage }>> {
+    const participantThreads = await db
+      .select({ threadId: chatParticipants.threadId })
+      .from(chatParticipants)
+      .where(eq(chatParticipants.userId, userId));
+
+    const threadIds = participantThreads.map((row) => row.threadId);
+    if (threadIds.length === 0) return [];
+
+    const threads = await db
+      .select()
+      .from(chatThreads)
+      .where(inArray(chatThreads.id, threadIds))
+      .orderBy(desc(chatThreads.updatedAt));
+
+    const participants = await db
+      .select({
+        threadId: chatParticipants.threadId,
+        user: {
+          id: users.id,
+          firstName: users.firstName,
+          lastName: users.lastName,
+          email: users.email,
+          role: users.role,
+          profileImageUrl: users.profileImageUrl,
+        },
+      })
+      .from(chatParticipants)
+      .innerJoin(users, eq(chatParticipants.userId, users.id))
+      .where(inArray(chatParticipants.threadId, threadIds));
+
+    const messages = await db
+      .select()
+      .from(chatMessages)
+      .where(inArray(chatMessages.threadId, threadIds))
+      .orderBy(desc(chatMessages.createdAt));
+
+    const lastMessageByThread = new Map<string, ChatMessage>();
+    for (const message of messages) {
+      if (!lastMessageByThread.has(message.threadId)) {
+        lastMessageByThread.set(message.threadId, message);
+      }
+    }
+
+    const participantsByThread = new Map<string, User[]>();
+    for (const row of participants) {
+      const existing = participantsByThread.get(row.threadId) ?? [];
+      existing.push(row.user);
+      participantsByThread.set(row.threadId, existing);
+    }
+
+    return threads.map((thread) => ({
+      thread,
+      participants: (participantsByThread.get(thread.id) ?? []).filter(
+        (participant) => participant.id !== userId,
+      ),
+      lastMessage: lastMessageByThread.get(thread.id),
+    }));
+  }
+
+  async getChatMessages(threadId: string): Promise<ChatMessage[]> {
+    return db
+      .select()
+      .from(chatMessages)
+      .where(eq(chatMessages.threadId, threadId))
+      .orderBy(asc(chatMessages.createdAt));
+  }
+
+  async createOrGetChatThread(userId: string, otherUserId: string): Promise<ChatThread> {
+    const userThreads = await db
+      .select({ threadId: chatParticipants.threadId })
+      .from(chatParticipants)
+      .where(eq(chatParticipants.userId, userId));
+    const otherThreads = await db
+      .select({ threadId: chatParticipants.threadId })
+      .from(chatParticipants)
+      .where(eq(chatParticipants.userId, otherUserId));
+
+    const userThreadIds = new Set(userThreads.map((row) => row.threadId));
+    const candidateThreadIds = otherThreads
+      .map((row) => row.threadId)
+      .filter((threadId) => userThreadIds.has(threadId));
+
+    if (candidateThreadIds.length > 0) {
+      const candidateParticipants = await db
+        .select({ threadId: chatParticipants.threadId, userId: chatParticipants.userId })
+        .from(chatParticipants)
+        .where(inArray(chatParticipants.threadId, candidateThreadIds));
+
+      const participantsByThread = new Map<string, Set<string>>();
+      for (const row of candidateParticipants) {
+        const existing = participantsByThread.get(row.threadId) ?? new Set<string>();
+        existing.add(row.userId);
+        participantsByThread.set(row.threadId, existing);
+      }
+
+      for (const [threadId, participantSet] of participantsByThread.entries()) {
+        if (participantSet.size === 2 && participantSet.has(userId) && participantSet.has(otherUserId)) {
+          const [thread] = await db.select().from(chatThreads).where(eq(chatThreads.id, threadId));
+          if (thread) return thread;
+        }
+      }
+    }
+
+    const [thread] = await db.insert(chatThreads).values({}).returning();
+    await db.insert(chatParticipants).values([
+      { threadId: thread.id, userId },
+      { threadId: thread.id, userId: otherUserId },
+    ]);
+    return thread;
+  }
+
+  async isChatParticipant(threadId: string, userId: string): Promise<boolean> {
+    const [participant] = await db
+      .select()
+      .from(chatParticipants)
+      .where(and(eq(chatParticipants.threadId, threadId), eq(chatParticipants.userId, userId)));
+    return Boolean(participant);
+  }
+
+  async createChatMessage(message: InsertChatMessage): Promise<ChatMessage> {
+    const [created] = await db.insert(chatMessages).values(message).returning();
+    await db
+      .update(chatThreads)
+      .set({ updatedAt: new Date() })
+      .where(eq(chatThreads.id, message.threadId));
+    return created;
+  }
+
+  async deleteChatMessagesBefore(cutoff: Date): Promise<number> {
+    const result = await db.delete(chatMessages).where(lt(chatMessages.createdAt, cutoff)).returning();
+    return result.length;
   }
 
   async getEnrolledStudentIds(courseId: string): Promise<string[]> {

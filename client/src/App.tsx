@@ -53,6 +53,7 @@ import AdminSettings from "@/pages/admin/settings";
 import SuperAdminUsers from "@/pages/admin/super-admin-users";
 import AdminWallets from "@/pages/admin/wallets";
 import Announcements from "@/pages/announcements";
+import ChatPage from "@/pages/chat";
 
 function LoadingScreen() {
   return (
@@ -148,6 +149,7 @@ function StudentRoutes() {
   return (
     <Switch>
       <Route path="/" component={StudentDashboard} />
+      <Route path="/chat" component={ChatPage} />
       <Route path="/courses" component={StudentCourses} />
       <Route path="/assignments" component={StudentAssignments} />
       <Route path="/grades" component={StudentGrades} />
@@ -162,6 +164,7 @@ function ParentRoutes() {
   return (
     <Switch>
       <Route path="/" component={ParentDashboard} />
+      <Route path="/chat" component={ChatPage} />
       <Route path="/courses" component={StudentCourses} />
       <Route path="/grades" component={StudentGrades} />
       <Route path="/invoices" component={ParentInvoices} />
@@ -175,6 +178,7 @@ function TutorRoutes() {
   return (
     <Switch>
       <Route path="/" component={TutorDashboard} />
+      <Route path="/chat" component={ChatPage} />
       <Route path="/tutor/courses" component={TutorCourses} />
       <Route path="/tutor/courses/:id" component={TutorCourseDetail} />
       <Route path="/tutor/gradebook" component={TutorGradebook} />
@@ -193,6 +197,7 @@ function ManagerRoutes() {
     <Switch>
       <Route path="/" component={ManagerDashboard} />
       <Route path="/manager/overview" component={ManagerDashboard} />
+      <Route path="/chat" component={ChatPage} />
       <Route path="/manager/tutors" component={ManagerTutors} />
       <Route path="/manager/courses" component={ManagerCourses} />
       <Route path="/manager/courses/:courseId" component={ManagerCourseDetail} />
@@ -208,6 +213,7 @@ function AdminRoutes() {
     <Switch>
       <Route path="/" component={AdminDashboard} />
       <Route path="/admin" component={AdminDashboard} />
+      <Route path="/chat" component={ChatPage} />
       <Route path="/admin/users" component={AdminUsers} />
       <Route path="/admin/wallets" component={AdminWallets} />
       <Route path="/admin/invoices" component={AdminInvoices} />
