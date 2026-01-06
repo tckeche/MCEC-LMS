@@ -772,15 +772,6 @@ export async function registerRoutes(
   // Get active students for tutor enrollment (searchable dropdown)
   app.get('/api/tutor/active-students', isAuthenticated, requireRole("tutor", "admin", "manager"), async (req: Request, res: Response) => {
     try {
-      const dbUser = (req as any).dbUser;
-      
-      // For tutors, only return students in their courses
-      if (dbUser.role === "tutor") {
-        const students = await storage.getActiveStudentsByTutor(dbUser.id);
-        return res.json(students);
-      }
-      
-      // Admin/manager see all active students
       const students = await storage.getActiveStudents();
       res.json(students);
     } catch (error) {
