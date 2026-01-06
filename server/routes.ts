@@ -25,6 +25,7 @@ import {
   insertPayoutSchema,
   insertPayoutLineSchema,
   insertPayoutFlagSchema,
+  insertChatMessageSchema,
   type UserRole,
   type ProposalStatus,
   type TutoringSessionStatus,
@@ -2200,6 +2201,111 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Error deleting notification:", error);
       res.status(500).json({ message: "Failed to delete notification" });
+    }
+  });
+
+  // ==========================================
+  // CHAT ROUTES (DIRECT MESSAGES)
+  // ==========================================
+
+  // Get users available for chat
+  app.get('/api/chats/users', isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const userId = req.user?.claims?.sub;
+      if (!userId) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+      const users = await storage.getChatUsers(userId);
+      res.json(users);
+    } catch (error) {
+      console.error("Error fetching chat users:", error);
+      res.status(500).json({ message: "Failed to fetch chat users" });
+    }
+  });
+
+  // Get chat threads for current user
+  app.get('/api/chats', isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const userId = req.user?.claims?.sub;
+      if (!userId) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+      const threads = await storage.getChatThreadsByUser(userId);
+      res.json(threads.map((thread) => ({
+        id: thread.thread.id,
+        updatedAt: thread.thread.updatedAt,
+        participants: thread.participants,
+        lastMessage: thread.lastMessage,
+      })));
+    } catch (error) {
+      console.error("Error fetching chats:", error);
+      res.status(500).json({ message: "Failed to fetch chats" });
+    }
+  });
+
+  // Create or fetch a direct message thread
+  app.post('/api/chats', isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const userId = req.user?.claims?.sub;
+      if (!userId) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+      const body = z.object({ participantId: z.string().min(1) }).parse(req.body);
+      if (body.participantId === userId) {
+        return res.status(400).json({ message: "Cannot start a chat with yourself" });
+      }
+      const participant = await storage.getUser(body.participantId);
+      if (!participant || !participant.isActive || participant.status !== "active") {
+        return res.status(404).json({ message: "Chat participant not available" });
+      }
+      const thread = await storage.createOrGetChatThread(userId, body.participantId);
+      res.json(thread);
+    } catch (error) {
+      console.error("Error creating chat thread:", error);
+      res.status(500).json({ message: "Failed to create chat thread" });
+    }
+  });
+
+  // Get messages for a thread
+  app.get('/api/chats/:threadId/messages', isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const userId = req.user?.claims?.sub;
+      if (!userId) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+      const isParticipant = await storage.isChatParticipant(req.params.threadId, userId);
+      if (!isParticipant) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+      const messages = await storage.getChatMessages(req.params.threadId);
+      res.json(messages);
+    } catch (error) {
+      console.error("Error fetching chat messages:", error);
+      res.status(500).json({ message: "Failed to fetch chat messages" });
+    }
+  });
+
+  // Send a message in a thread
+  app.post('/api/chats/:threadId/messages', isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const userId = req.user?.claims?.sub;
+      if (!userId) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+      const isParticipant = await storage.isChatParticipant(req.params.threadId, userId);
+      if (!isParticipant) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+      const data = insertChatMessageSchema.pick({ content: true }).parse(req.body);
+      const message = await storage.createChatMessage({
+        threadId: req.params.threadId,
+        senderId: userId,
+        content: data.content,
+      });
+      res.json(message);
+    } catch (error) {
+      console.error("Error sending chat message:", error);
+      res.status(500).json({ message: "Failed to send chat message" });
     }
   });
 

@@ -16,6 +16,7 @@ import {
   UserCheck,
   LogOut,
   Shield,
+  MessageSquare,
 } from "lucide-react";
 import {
   Sidebar,
@@ -46,6 +47,12 @@ const navItems: NavItem[] = [
     title: "Dashboard",
     url: "/",
     icon: Home,
+    roles: ["student", "parent", "tutor", "manager", "admin"],
+  },
+  {
+    title: "Chat",
+    url: "/chat",
+    icon: MessageSquare,
     roles: ["student", "parent", "tutor", "manager", "admin"],
   },
   {

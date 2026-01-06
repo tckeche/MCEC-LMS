@@ -2,6 +2,7 @@ import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
+import { storage } from "./storage";
 
 const app = express();
 const httpServer = createServer(app);
@@ -61,6 +62,21 @@ app.use((req, res, next) => {
 
 (async () => {
   await registerRoutes(httpServer, app);
+
+  const runChatRetentionCleanup = async () => {
+    const cutoff = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000);
+    try {
+      const deletedCount = await storage.deleteChatMessagesBefore(cutoff);
+      if (deletedCount > 0) {
+        log(`deleted ${deletedCount} chat messages older than 60 days`, "chat-retention");
+      }
+    } catch (error) {
+      log(`failed to delete old chat messages: ${(error as Error).message}`, "chat-retention");
+    }
+  };
+
+  await runChatRetentionCleanup();
+  setInterval(runChatRetentionCleanup, 24 * 60 * 60 * 1000);
 
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
     const status = err.status || err.statusCode || 500;
