@@ -1,0 +1,11 @@
+[
+  { "method": "GET", "path": "/api/health" },
+  { "method": "GET", "path": "/api/users/me" },
+  { "method": "GET", "path": "/api/roles" },
+  { "method": "GET", "path": "/api/courses" },
+  { "method": "GET", "path": "/api/enrollments" },
+  { "method": "GET", "path": "/api/tutoring-sessions" },
+  { "method": "GET", "path": "/api/hour-wallets" },
+  { "method": "GET", "path": "/api/assignments" },
+  { "method": "GET", "path": "/api/submissions" }
+]

@@ -1,0 +1,248 @@
+{
+  "summary": {
+    "baseUrl": "http://localhost:5000",
+    "login": {
+      "didLogin": true,
+      "note": "Login attempted"
+    },
+    "crawl": {
+      "pagesVisited": 5,
+      "discoveredPages": [
+        "http://localhost:5000/",
+        "http://localhost:5000/auth/login",
+        "http://localhost:5000/auth/parent-signup",
+        "http://localhost:5000/auth/staff-login",
+        "http://localhost:5000/auth/staff-proposal"
+      ]
+    },
+    "totals": {
+      "apisCaptured": 12,
+      "apisOk": 7,
+      "apisWithIssues": 5
+    },
+    "generatedAt": "2026-01-06T21:21:35.741Z"
+  },
+  "results": [
+    {
+      "source": "ui",
+      "method": "GET",
+      "path": "/api/auth/user",
+      "url": "http://localhost:5000/api/auth/user",
+      "status": 401,
+      "ms": 13,
+      "ok": false,
+      "contentType": "application/json; charset=utf-8",
+      "jsonOk": true,
+      "expectedStatus": null
+    },
+    {
+      "source": "ui",
+      "method": "GET",
+      "path": "/api/auth/dev-status",
+      "url": "http://localhost:5000/api/auth/dev-status",
+      "status": 200,
+      "ms": 21,
+      "ok": true,
+      "contentType": "application/json; charset=utf-8",
+      "jsonOk": true,
+      "expectedStatus": null
+    },
+    {
+      "source": "ui",
+      "method": "POST",
+      "path": "/api/auth/dev/staff-login",
+      "url": "http://localhost:5000/api/auth/dev/staff-login",
+      "status": 401,
+      "ms": 7,
+      "ok": false,
+      "contentType": "application/json; charset=utf-8",
+      "jsonOk": true,
+      "expectedStatus": null
+    },
+    {
+      "source": "manifest",
+      "method": "GET",
+      "path": "/api/health",
+      "url": "http://localhost:5000/api/health",
+      "status": 200,
+      "ms": 7,
+      "ok": true,
+      "contentType": "text/html; charset=utf-8",
+      "jsonOk": null,
+      "expectedStatus": null
+    },
+    {
+      "source": "manifest",
+      "method": "GET",
+      "path": "/api/users/me",
+      "url": "http://localhost:5000/api/users/me",
+      "status": 200,
+      "ms": 9,
+      "ok": true,
+      "contentType": "text/html; charset=utf-8",
+      "jsonOk": null,
+      "expectedStatus": null
+    },
+    {
+      "source": "manifest",
+      "method": "GET",
+      "path": "/api/roles",
+      "url": "http://localhost:5000/api/roles",
+      "status": 200,
+      "ms": 10,
+      "ok": true,
+      "contentType": "text/html; charset=utf-8",
+      "jsonOk": null,
+      "expectedStatus": null
+    },
+    {
+      "source": "manifest",
+      "method": "GET",
+      "path": "/api/courses",
+      "url": "http://localhost:5000/api/courses",
+      "status": 401,
+      "ms": 17,
+      "ok": false,
+      "contentType": "application/json; charset=utf-8",
+      "jsonOk": true,
+      "expectedStatus": null
+    },
+    {
+      "source": "manifest",
+      "method": "GET",
+      "path": "/api/enrollments",
+      "url": "http://localhost:5000/api/enrollments",
+      "status": 200,
+      "ms": 47,
+      "ok": true,
+      "contentType": "text/html; charset=utf-8",
+      "jsonOk": null,
+      "expectedStatus": null
+    },
+    {
+      "source": "manifest",
+      "method": "GET",
+      "path": "/api/tutoring-sessions",
+      "url": "http://localhost:5000/api/tutoring-sessions",
+      "status": 401,
+      "ms": 13,
+      "ok": false,
+      "contentType": "application/json; charset=utf-8",
+      "jsonOk": true,
+      "expectedStatus": null
+    },
+    {
+      "source": "manifest",
+      "method": "GET",
+      "path": "/api/hour-wallets",
+      "url": "http://localhost:5000/api/hour-wallets",
+      "status": 401,
+      "ms": 26,
+      "ok": false,
+      "contentType": "application/json; charset=utf-8",
+      "jsonOk": true,
+      "expectedStatus": null
+    },
+    {
+      "source": "manifest",
+      "method": "GET",
+      "path": "/api/assignments",
+      "url": "http://localhost:5000/api/assignments",
+      "status": 200,
+      "ms": 16,
+      "ok": true,
+      "contentType": "text/html; charset=utf-8",
+      "jsonOk": null,
+      "expectedStatus": null
+    },
+    {
+      "source": "manifest",
+      "method": "GET",
+      "path": "/api/submissions",
+      "url": "http://localhost:5000/api/submissions",
+      "status": 200,
+      "ms": 9,
+      "ok": true,
+      "contentType": "text/html; charset=utf-8",
+      "jsonOk": null,
+      "expectedStatus": null
+    }
+  ],
+  "issues": [
+    {
+      "source": "ui",
+      "method": "GET",
+      "path": "/api/auth/user",
+      "url": "http://localhost:5000/api/auth/user",
+      "status": 401,
+      "ms": 13,
+      "ok": false,
+      "contentType": "application/json; charset=utf-8",
+      "jsonOk": true,
+      "expectedStatus": null,
+      "errorType": "client",
+      "responsePreview": "{\"message\":\"Unauthorized\"}",
+      "suggestedFix": "Auth or RBAC issue, confirm session cookie or token is present, confirm role permissions, confirm middleware ordering and route protection rules"
+    },
+    {
+      "source": "ui",
+      "method": "POST",
+      "path": "/api/auth/dev/staff-login",
+      "url": "http://localhost:5000/api/auth/dev/staff-login",
+      "status": 401,
+      "ms": 7,
+      "ok": false,
+      "contentType": "application/json; charset=utf-8",
+      "jsonOk": true,
+      "expectedStatus": null,
+      "errorType": "client",
+      "responsePreview": "{\"message\":\"Invalid email or password\"}",
+      "suggestedFix": "Auth or RBAC issue, confirm session cookie or token is present, confirm role permissions, confirm middleware ordering and route protection rules"
+    },
+    {
+      "source": "manifest",
+      "method": "GET",
+      "path": "/api/courses",
+      "url": "http://localhost:5000/api/courses",
+      "status": 401,
+      "ms": 17,
+      "ok": false,
+      "contentType": "application/json; charset=utf-8",
+      "jsonOk": true,
+      "expectedStatus": null,
+      "errorType": "client",
+      "responsePreview": "{\"message\":\"Unauthorized\"}",
+      "suggestedFix": "Auth or RBAC issue, confirm session cookie or token is present, confirm role permissions, confirm middleware ordering and route protection rules"
+    },
+    {
+      "source": "manifest",
+      "method": "GET",
+      "path": "/api/tutoring-sessions",
+      "url": "http://localhost:5000/api/tutoring-sessions",
+      "status": 401,
+      "ms": 13,
+      "ok": false,
+      "contentType": "application/json; charset=utf-8",
+      "jsonOk": true,
+      "expectedStatus": null,
+      "errorType": "client",
+      "responsePreview": "{\"message\":\"Unauthorized\"}",
+      "suggestedFix": "Auth or RBAC issue, confirm session cookie or token is present, confirm role permissions, confirm middleware ordering and route protection rules"
+    },
+    {
+      "source": "manifest",
+      "method": "GET",
+      "path": "/api/hour-wallets",
+      "url": "http://localhost:5000/api/hour-wallets",
+      "status": 401,
+      "ms": 26,
+      "ok": false,
+      "contentType": "application/json; charset=utf-8",
+      "jsonOk": true,
+      "expectedStatus": null,
+      "errorType": "client",
+      "responsePreview": "{\"message\":\"Unauthorized\"}",
+      "suggestedFix": "Auth or RBAC issue, confirm session cookie or token is present, confirm role permissions, confirm middleware ordering and route protection rules"
+    }
+  ]
+}
