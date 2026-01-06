@@ -4691,5 +4691,34 @@ export async function registerRoutes(
     }
   });
 
+  // Debug endpoint for course consistency checking (admin only)
+  app.get('/api/debug/courses', isAuthenticated, requireRole("admin"), async (req: Request, res: Response) => {
+    try {
+      const allCourses = await storage.getAllCourses();
+      const enrollmentsByCourse: Record<string, number> = {};
+      
+      for (const course of allCourses) {
+        const enrollments = await storage.getEnrollmentsByCourse(course.id);
+        enrollmentsByCourse[course.id] = enrollments.filter(e => e.status === "active").length;
+      }
+      
+      res.json({
+        environment: process.env.NODE_ENV || "unknown",
+        courseCount: allCourses.length,
+        courses: allCourses.map(c => ({
+          id: c.id,
+          title: c.title,
+          tutorId: c.tutorId,
+          isActive: c.isActive,
+          activeEnrollments: enrollmentsByCourse[c.id] || 0,
+        })),
+        timestamp: new Date().toISOString(),
+      });
+    } catch (error) {
+      console.error("Error in debug courses endpoint:", error);
+      res.status(500).json({ message: "Failed to fetch debug info" });
+    }
+  });
+
   return httpServer;
 }
