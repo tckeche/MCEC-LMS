@@ -182,6 +182,7 @@ export interface IStorage {
     totalStudents: number;
     totalTutors: number;
   }>;
+  getPlatformAverageGrade(): Promise<number | null>;
   getAdminStats(): Promise<{
     totalUsers: number;
     usersByRole: Record<UserRole, number>;
@@ -1081,6 +1082,33 @@ export class DatabaseStorage implements IStorage {
       totalStudents: Number(studentCount?.count || 0),
       totalTutors: Number(tutorCount?.count || 0),
     };
+  }
+
+  async getPlatformAverageGrade(): Promise<number | null> {
+    const result = await db
+      .select({
+        points: grades.points,
+        pointsPossible: assignments.pointsPossible,
+      })
+      .from(grades)
+      .innerJoin(submissions, eq(grades.submissionId, submissions.id))
+      .innerJoin(assignments, eq(submissions.assignmentId, assignments.id));
+
+    let validGradeCount = 0;
+    const totalPercentage = result.reduce((sum, row) => {
+      const pointsPossible = row.pointsPossible;
+      if (pointsPossible && pointsPossible > 0) {
+        validGradeCount += 1;
+        return sum + ((row.points || 0) / pointsPossible) * 100;
+      }
+      return sum;
+    }, 0);
+
+    if (validGradeCount === 0) {
+      return null;
+    }
+
+    return Math.round(totalPercentage / validGradeCount);
   }
 
   async getAdminStats(): Promise<{

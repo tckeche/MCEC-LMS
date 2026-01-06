@@ -141,7 +141,7 @@ export default function ManagerTutors() {
                   <div>
                     <p className="text-sm text-muted-foreground">Platform Avg Grade</p>
                     <p className="text-2xl font-bold" data-testid="stat-avg-grade">
-                      {stats.avgGrade !== null ? `${stats.avgGrade}%` : "--"}
+                      {typeof stats.avgGrade === "number" ? `${stats.avgGrade}%` : "--"}
                     </p>
                   </div>
                 </div>

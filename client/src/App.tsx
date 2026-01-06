@@ -42,6 +42,7 @@ import CalendarPage from "@/pages/calendar";
 import ManagerDashboard from "@/pages/manager/dashboard";
 import ManagerTutors from "@/pages/manager/tutors";
 import ManagerCourses from "@/pages/manager/courses";
+import ManagerCourseDetail from "@/pages/manager/course-detail";
 import AdminDashboard from "@/pages/admin/dashboard";
 import AdminUsers from "@/pages/admin/users";
 import AdminInvoices from "@/pages/admin/invoices";
@@ -194,6 +195,7 @@ function ManagerRoutes() {
       <Route path="/manager/overview" component={ManagerDashboard} />
       <Route path="/manager/tutors" component={ManagerTutors} />
       <Route path="/manager/courses" component={ManagerCourses} />
+      <Route path="/manager/courses/:courseId" component={ManagerCourseDetail} />
       <Route path="/manager/wallets" component={AdminWallets} />
       <Route path="/announcements" component={Announcements} />
       <Route component={NotFound} />
@@ -205,6 +207,7 @@ function AdminRoutes() {
   return (
     <Switch>
       <Route path="/" component={AdminDashboard} />
+      <Route path="/admin" component={AdminDashboard} />
       <Route path="/admin/users" component={AdminUsers} />
       <Route path="/admin/wallets" component={AdminWallets} />
       <Route path="/admin/invoices" component={AdminInvoices} />
@@ -219,7 +222,7 @@ function AdminRoutes() {
   );
 }
 
-function AppRouter() {
+export function AppRouter() {
   const { user, isLoading } = useAuth();
   const { viewAsRole } = useViewAs();
   const [location] = useLocation();
