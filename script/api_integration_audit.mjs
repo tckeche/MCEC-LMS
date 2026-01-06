@@ -119,127 +119,84 @@ async function tryLogin(page) {
     return { didLogin: false, note: "No credentials provided in env" };
   }
 
+  console.log("EMAIL present:", Boolean(EMAIL), "PASSWORD present:", Boolean(PASSWORD));
+  console.log("EMAIL length:", EMAIL.length, "PASSWORD length:", PASSWORD.length);
+
   const loginUrl = `${BASE_URL}${LOGIN_PATH}`;
   console.log("Opening login page:", loginUrl);
 
   await page.goto(loginUrl, { waitUntil: "domcontentloaded" });
+  await page.waitForLoadState("networkidle").catch(() => {});
+  await page.waitForTimeout(1000);
 
-  const emailSelectors = [
-    'input[type="email"]',
-    'input[name="email"]',
-    'input[id="email"]',
-    'input[placeholder*="email" i]',
-    'input[autocomplete="username"]',
-    'input[autocomplete="email"]',
-    'input[data-testid*="email" i]',
-  ];
-
-  const passSelectors = [
-    'input[type="password"]',
-    'input[name="password"]',
-    'input[id="password"]',
-    'input[placeholder*="password" i]',
-    'input[autocomplete="current-password"]',
-    'input[data-testid*="password" i]',
-  ];
-
-  async function fillFirst(selectors, value, label) {
-    for (const s of selectors) {
-      const loc = page.locator(s).first();
-      if (await loc.count()) {
-        await loc.fill(value);
-        console.log("Filled", label, "using selector:", s);
+  async function fillIfExists(locator, value, label) {
+    try {
+      if (await locator.count()) {
+        await locator.first().fill(value);
+        console.log("Filled", label);
         return true;
       }
-    }
+    } catch {}
     return false;
   }
 
-  const emailOk = await fillFirst(emailSelectors, EMAIL, "email");
-  const passOk = await fillFirst(passSelectors, PASSWORD, "password");
+  const emailOk =
+    (await fillIfExists(page.getByLabel(/email/i), EMAIL, "email using label")) ||
+    (await fillIfExists(page.getByPlaceholder(/email/i), EMAIL, "email using placeholder")) ||
+    (await fillIfExists(page.locator('input[type="email"]'), EMAIL, "email using type=email")) ||
+    (await fillIfExists(page.locator('input[name="email"]'), EMAIL, "email using name=email")) ||
+    (await fillIfExists(page.locator('input[id="email"]'), EMAIL, "email using id=email")) ||
+    (await fillIfExists(page.locator('input[autocomplete="username"]'), EMAIL, "email using autocomplete=username"));
+
+  const passOk =
+    (await fillIfExists(page.getByLabel(/password/i), PASSWORD, "password using label")) ||
+    (await fillIfExists(page.getByPlaceholder(/password/i), PASSWORD, "password using placeholder")) ||
+    (await fillIfExists(page.locator('input[type="password"]'), PASSWORD, "password using type=password")) ||
+    (await fillIfExists(page.locator('input[name="password"]'), PASSWORD, "password using name=password")) ||
+    (await fillIfExists(page.locator('input[id="password"]'), PASSWORD, "password using id=password")) ||
+    (await fillIfExists(page.locator('input[autocomplete="current-password"]'), PASSWORD, "password using autocomplete=current-password"));
 
   if (!emailOk || !passOk) {
     console.log("Could not find login inputs. emailOk:", emailOk, "passOk:", passOk);
+
+    try {
+      const html = await page.content();
+      fs.writeFileSync("reports/login-debug.html", html, "utf8");
+      await page.screenshot({ path: "reports/login-debug.png", fullPage: true });
+      console.log("Saved reports/login-debug.html and reports/login-debug.png");
+    } catch {}
+
     return { didLogin: false, note: "Could not find email or password inputs on login page" };
   }
 
-  const possibleButtons = [
-    'button[type="submit"]',
-    'button:has-text("Login")',
-    'button:has-text("Log in")',
-    'button:has-text("Sign in")',
-    'button:has-text("Continue")',
-    'button:has-text("Next")',
-  ];
+  const button =
+    page.getByRole("button", { name: /sign in|login|log in|continue|next/i }).first();
 
-  let clicked = false;
-  for (const b of possibleButtons) {
-    const btn = page.locator(b).first();
-    if (await btn.count()) {
-      await Promise.allSettled([
-        page.waitForNavigation({ timeout: 15000 }),
-        btn.click(),
-      ]);
-      console.log("Clicked submit using selector:", b);
-      clicked = true;
-      break;
-    }
-  }
-
-  if (!clicked) {
-    console.log("No submit button matched, pressing Enter in password field");
-    await page.keyboard.press("Enter");
-    await Promise.allSettled([page.waitForNavigation({ timeout: 15000 })]);
-  }
-
-  await page.waitForTimeout(1500);
-
-  const currentUrl = page.url();
-  console.log("URL after login attempt:", currentUrl);
-
-  try {
-    await page.waitForLoadState("networkidle", { timeout: 10000 });
-  } catch {}
-
-  return { didLogin: true, note: "Login attempted" };
-}
-;
-
-  async function fillFirst(selectors, value) {
-    for (const s of selectors) {
-      const el = await page.$(s);
-      if (el) {
-        await el.fill(value);
-        return true;
-      }
-    }
-    return false;
-  }
-
-  const emailOk = await fillFirst(emailSelectors, EMAIL);
-  const passOk = await fillFirst(passSelectors, PASSWORD);
-
-  if (!emailOk || !passOk) {
-    return { didLogin: false, note: "Could not find email or password inputs on login page" };
-  }
-
-  const submit =
-    (await page.$('button[type="submit"]')) ||
-    (await page.$('button:has-text("Login")')) ||
-    (await page.$('button:has-text("Sign in")'));
-
-  if (submit) {
-    await submit.click();
+  if (await button.count()) {
+    await button.click();
+    console.log("Clicked submit button");
   } else {
     await page.keyboard.press("Enter");
+    console.log("Pressed Enter to submit");
   }
 
-  try {
-    await page.waitForLoadState("networkidle", { timeout: 20000 });
-  } catch {}
+  await page.waitForTimeout(2500);
+
+  console.log("URL after login attempt:", page.url());
+
+  const errorText = await page.evaluate(() => {
+    const text = document.body ? (document.body.innerText || "") : "";
+    const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
+    const keywords = ["invalid", "incorrect", "unauthorized", "failed", "error", "try again"];
+    const hit = lines.find((t) => keywords.some((k) => t.toLowerCase().includes(k)));
+    return hit || "";
+  });
+
+  if (errorText) console.log("Login page error text found:", errorText);
 
   return { didLogin: true, note: "Login attempted" };
 }
+
 
 async function crawlAndCapture(page) {
   const visited = new Set();
@@ -354,9 +311,6 @@ async function main() {
   const cookieNames = (await context.cookies()).map((c) => c.name);
   console.log("Cookies after login attempt:", cookieNames);
 
-  // Prove whether we actually have a logged in session
-  const cookieNames = (await context.cookies()).map((c) => c.name);
-  console.log("Cookies after login attempt:", cookieNames);
 
   const meResp = await context.request.get(`${BASE_URL}/api/auth/user`);
   console.log("Auth user status after login attempt:", meResp.status());
