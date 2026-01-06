@@ -862,6 +862,8 @@ export async function registerRoutes(
     try {
       const { studentId, month, year, totalMinutes, allocations, reason } = req.body;
       
+      console.log(`[Allocate Month] Received: studentId=${studentId}, month=${month}/${year}, totalMinutes=${totalMinutes}`);
+      
       // Validate required fields
       if (!studentId || !month || !year || !totalMinutes || !allocations) {
         return res.status(400).json({ message: "Missing required fields" });
@@ -875,14 +877,25 @@ export async function registerRoutes(
         });
       }
       
-      // Process each allocation
+      // Process each allocation with course validation
       const monthLabel = new Date(year, month - 1).toLocaleString('default', { month: 'long', year: 'numeric' });
       const transactionReason = reason ? `${reason} - Allocation for ${monthLabel}` : `Allocation for ${monthLabel}`;
       
       for (const allocation of allocations) {
         if (allocation.minutes > 0) {
+          // Validate course exists using fallback lookup
+          const { course, usedFallback } = await storage.getCourseByIdOrTitle(allocation.courseId);
+          if (!course) {
+            console.error(`[Allocate Month] Course not found: ${allocation.courseId}`);
+            return res.status(404).json({ message: `Course not found: ${allocation.courseId}` });
+          }
+          if (usedFallback) {
+            console.warn(`[Allocate Month] Used fallback lookup: "${allocation.courseId}" -> "${course.id}"`);
+          }
+          const resolvedCourseId = course.id;
+          
           // Add minutes to wallet (creates wallet if doesn't exist)
-          const wallet = await storage.addMinutesToWallet(studentId, allocation.courseId, allocation.minutes);
+          const wallet = await storage.addMinutesToWallet(studentId, resolvedCourseId, allocation.minutes);
           
           // Create transaction record with correct schema fields
           if (wallet) {
@@ -972,12 +985,26 @@ export async function registerRoutes(
   app.post('/api/enrollments', isAuthenticated, requireRole("admin", "manager", "tutor"), async (req: Request, res: Response) => {
     try {
       const dbUser = (req as any).dbUser;
-      const validated = insertEnrollmentSchema.parse(req.body);
+      const rawCourseId = req.body.courseId;
+      
+      console.log(`[Enrollment Create] Received: studentId=${req.body.studentId}, courseId=${rawCourseId}`);
+      
+      // Use fallback course lookup
+      const { course, usedFallback } = await storage.getCourseByIdOrTitle(rawCourseId);
+      if (!course) {
+        console.error(`[Enrollment Create] Course not found for identifier: ${rawCourseId}`);
+        return res.status(404).json({ message: `Course not found: ${rawCourseId}` });
+      }
+      if (usedFallback) {
+        console.warn(`[Enrollment Create] Used fallback lookup: "${rawCourseId}" -> "${course.id}"`);
+      }
+      
+      // Replace courseId with resolved course.id
+      const validated = insertEnrollmentSchema.parse({ ...req.body, courseId: course.id });
       
       // Tutors can only enroll students in their own courses
       if (dbUser.role === "tutor") {
-        const course = await storage.getCourse(validated.courseId);
-        if (!course || course.tutorId !== dbUser.id) {
+        if (course.tutorId !== dbUser.id) {
           return res.status(403).json({ message: "You can only enroll students in your own courses" });
         }
       }
@@ -3012,12 +3039,24 @@ export async function registerRoutes(
   app.get('/api/hour-wallets/course/:courseId', isAuthenticated, requireRole("manager", "admin", "tutor"), async (req: Request, res: Response) => {
     try {
       const dbUser = (req as any).dbUser;
-      const { courseId } = req.params;
+      const rawCourseId = req.params.courseId;
+      
+      console.log(`[Wallets By Course] Received: courseId=${rawCourseId}`);
+      
+      // Use fallback course lookup
+      const { course, usedFallback } = await storage.getCourseByIdOrTitle(rawCourseId);
+      if (!course) {
+        console.error(`[Wallets By Course] Course not found for identifier: ${rawCourseId}`);
+        return res.status(404).json({ message: `Course not found: ${rawCourseId}` });
+      }
+      const courseId = course.id;
+      if (usedFallback) {
+        console.warn(`[Wallets By Course] Used fallback lookup: "${rawCourseId}" -> "${courseId}"`);
+      }
       
       // For tutors, verify they are the tutor of this course
       if (dbUser.role === "tutor") {
-        const course = await storage.getCourse(courseId);
-        if (!course || course.tutorId !== dbUser.id) {
+        if (course.tutorId !== dbUser.id) {
           return res.status(403).json({ message: "Access denied: You can only view wallets for your own courses" });
         }
       }
@@ -3034,15 +3073,28 @@ export async function registerRoutes(
   // Create or add hours to wallet (manager/admin - original endpoint)
   app.post('/api/hour-wallets', isAuthenticated, requireRole("manager", "admin"), async (req: Request, res: Response) => {
     try {
-      const { studentId, courseId, minutes, reason } = req.body;
+      const { studentId, courseId: rawCourseId, minutes, reason } = req.body;
       const performedById = req.user?.claims?.sub;
       
-      if (!studentId || !courseId || !minutes || minutes <= 0) {
+      console.log(`[Wallet Create] Received: studentId=${studentId}, courseId=${rawCourseId}, minutes=${minutes}`);
+      
+      if (!studentId || !rawCourseId || !minutes || minutes <= 0) {
         return res.status(400).json({ message: "Invalid data: studentId, courseId, and positive minutes required" });
       }
       
       if (!reason || reason.trim() === "") {
         return res.status(400).json({ message: "Reason is required for top-up" });
+      }
+      
+      // Use fallback course lookup
+      const { course, usedFallback } = await storage.getCourseByIdOrTitle(rawCourseId);
+      if (!course) {
+        console.error(`[Wallet Create] Course not found for identifier: ${rawCourseId}`);
+        return res.status(404).json({ message: `Course not found: ${rawCourseId}` });
+      }
+      const courseId = course.id;
+      if (usedFallback) {
+        console.warn(`[Wallet Create] Used fallback lookup: "${rawCourseId}" -> "${courseId}"`);
       }
 
       let wallet;
@@ -3092,11 +3144,13 @@ export async function registerRoutes(
   // Top-up hours to wallet (admin, manager, or tutor with course permission)
   app.post('/api/hour-wallets/top-up', isAuthenticated, requireRole("admin", "manager", "tutor"), async (req: Request, res: Response) => {
     try {
-      const { studentId, courseId, addMinutes, reason } = req.body;
+      const { studentId, courseId: rawCourseId, addMinutes, reason } = req.body;
       const performedById = req.user?.claims?.sub;
       const dbUser = (req as any).dbUser;
       
-      if (!studentId || !courseId || !addMinutes || addMinutes <= 0) {
+      console.log(`[Wallet TopUp] Received: studentId=${studentId}, courseId=${rawCourseId}, addMinutes=${addMinutes}`);
+      
+      if (!studentId || !rawCourseId || !addMinutes || addMinutes <= 0) {
         return res.status(400).json({ message: "Invalid data: studentId, courseId, and positive addMinutes required" });
       }
       
@@ -3104,10 +3158,20 @@ export async function registerRoutes(
         return res.status(400).json({ message: "Reason is required for top-up" });
       }
       
+      // Use fallback course lookup
+      const { course, usedFallback } = await storage.getCourseByIdOrTitle(rawCourseId);
+      if (!course) {
+        console.error(`[Wallet TopUp] Course not found for identifier: ${rawCourseId}`);
+        return res.status(404).json({ message: `Course not found: ${rawCourseId}` });
+      }
+      const courseId = course.id;
+      if (usedFallback) {
+        console.warn(`[Wallet TopUp] Used fallback lookup: "${rawCourseId}" -> "${courseId}"`);
+      }
+      
       // For tutors, verify they are the tutor of this course
       if (dbUser.role === "tutor") {
-        const course = await storage.getCourse(courseId);
-        if (!course || course.tutorId !== dbUser.id) {
+        if (course.tutorId !== dbUser.id) {
           return res.status(403).json({ message: "Access denied: You can only add hours to courses you teach" });
         }
         
