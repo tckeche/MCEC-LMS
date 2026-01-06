@@ -95,16 +95,29 @@ export default function ChatPage() {
 
   const sendMessageMutation = useMutation({
     mutationFn: async () => {
-      if (!selectedThreadId) return;
-      const res = await apiRequest("POST", `/api/chats/${selectedThreadId}/messages`, {
-        content: messageDraft.trim(),
+      const trimmed = messageDraft.trim();
+      if (!trimmed) return;
+
+      let threadId = selectedThreadId;
+      if (!threadId && selectedUserId) {
+        const threadRes = await apiRequest("POST", "/api/chats", { participantId: selectedUserId });
+        const thread = await threadRes.json();
+        threadId = thread.id;
+        setSelectedThreadId(threadId);
+        setSelectedUserId("");
+      }
+
+      if (!threadId) return;
+
+      const res = await apiRequest("POST", `/api/chats/${threadId}/messages`, {
+        content: trimmed,
       });
-      return res.json();
+      return { threadId, message: await res.json() };
     },
-    onSuccess: () => {
+    onSuccess: (payload) => {
       setMessageDraft("");
-      if (selectedThreadId) {
-        queryClient.invalidateQueries({ queryKey: ["/api/chats", selectedThreadId, "messages"] });
+      if (payload?.threadId) {
+        queryClient.invalidateQueries({ queryKey: ["/api/chats", payload.threadId, "messages"] });
       }
       queryClient.invalidateQueries({ queryKey: ["/api/chats"] });
     },
@@ -262,12 +275,16 @@ export default function ChatPage() {
                   value={messageDraft}
                   onChange={(event) => setMessageDraft(event.target.value)}
                   rows={3}
-                  disabled={!selectedThreadId}
+                  disabled={!selectedThreadId && !selectedUserId}
                 />
                 <div className="flex items-center justify-end">
                   <Button
                     onClick={() => sendMessageMutation.mutate()}
-                    disabled={!selectedThreadId || !messageDraft.trim() || sendMessageMutation.isPending}
+                    disabled={
+                      (!selectedThreadId && !selectedUserId) ||
+                      !messageDraft.trim() ||
+                      sendMessageMutation.isPending
+                    }
                   >
                     Send
                   </Button>
