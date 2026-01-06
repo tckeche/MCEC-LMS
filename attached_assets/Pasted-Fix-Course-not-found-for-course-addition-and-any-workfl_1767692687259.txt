@@ -1,0 +1,53 @@
+Fix “Course not found” for course addition and any workflows that reference courses.
+
+Goal
+All course picking and course actions must work in the published Production app with no “Course not found” errors.
+
+Step 1. Identify the failing request
+Use the browser Network tab and reproduce the error.
+Record:
+1. The endpoint path
+2. The request payload
+3. The response status and body
+
+Step 2. Fix the root cause based on the payload
+A. If the payload is sending backendUniqueId, code, name, or anything that is not the real course primary key
+Then:
+1. Update every course dropdown to use course.id as the selected value.
+2. Display backendUniqueId or title as the label only.
+3. Ensure the API payload fields are named consistently as courseId and contain course.id.
+4. Add frontend validation that blocks submit if courseId is missing or not a valid id format used by the database.
+
+B. If the backend is expecting course.id but some callers send backendUniqueId
+Then make the backend tolerant:
+1. In the relevant API handler, attempt lookup by id first.
+2. If not found, attempt lookup by backendUniqueId.
+3. If found by backendUniqueId, proceed using the resolved course.id.
+4. Log a warning once per request that backendUniqueId was used so we can later remove the fallback.
+
+Step 3. Production database consistency check
+Confirm which database the published app is using.
+On Production, run or call a debug safe endpoint to confirm:
+1. The count of courses
+2. The course ids being returned
+3. The environment flag used by the server
+
+If Production has no data but Preview does, add an Admin only tool:
+1. Admin page action “Copy dev data to production” is NOT acceptable because it is dangerous.
+2. Instead create a controlled “Export courses and enrollments from preview” and “Import into production” admin tool, restricted to Super Admin and protected by a one time confirmation phrase.
+If that is too heavy, create courses manually in production and ensure flows work end to end.
+
+Step 4. Add automated checks so this never regresses
+Add a small E2E or integration test that:
+1. Creates a course
+2. Fetches course list and selects the created course by id
+3. Performs the failing action that previously returned “Course not found”
+4. Asserts 200 or 201 and confirms the database row exists
+
+Acceptance criteria
+1. The request payload always sends courseId equal to course.id.
+2. “Course not found” never appears when selecting a course that is visible in the dropdown.
+3. The fix is verified on the published Production URL, not only in Preview.
+4. Provide me the exact endpoint that was failing and a short note showing the before payload and after payload.
+Do not change scheduling logic or finance logic.
+Only fix course identification, lookups, and production data consistency.

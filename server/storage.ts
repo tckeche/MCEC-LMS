@@ -114,6 +114,7 @@ export interface IStorage {
   
   // Course operations
   getCourse(id: string): Promise<Course | undefined>;
+  getCourseByIdOrTitle(identifier: string): Promise<{ course: Course | undefined; usedFallback: boolean }>;
   getCourseWithTutor(id: string): Promise<CourseWithTutor | undefined>;
   getAllCourses(): Promise<CourseWithEnrollmentCount[]>;
   getCoursesByTutor(tutorId: string): Promise<CourseWithEnrollmentCount[]>;
@@ -454,6 +455,28 @@ export class DatabaseStorage implements IStorage {
   async getCourse(id: string): Promise<Course | undefined> {
     const [course] = await db.select().from(courses).where(eq(courses.id, id));
     return course;
+  }
+
+  // Fallback course lookup - tries id first, then title (for production data consistency)
+  async getCourseByIdOrTitle(identifier: string): Promise<{ course: Course | undefined; usedFallback: boolean }> {
+    // First try by ID
+    const [courseById] = await db.select().from(courses).where(eq(courses.id, identifier));
+    if (courseById) {
+      return { course: courseById, usedFallback: false };
+    }
+    
+    // Fallback: try by title (case-insensitive)
+    const [courseByTitle] = await db
+      .select()
+      .from(courses)
+      .where(sql`LOWER(${courses.title}) = LOWER(${identifier})`);
+    
+    if (courseByTitle) {
+      console.warn(`[Course Lookup] Used title fallback for "${identifier}" -> resolved to id: ${courseByTitle.id}`);
+      return { course: courseByTitle, usedFallback: true };
+    }
+    
+    return { course: undefined, usedFallback: false };
   }
 
   async getCourseWithTutor(id: string): Promise<CourseWithTutor | undefined> {
