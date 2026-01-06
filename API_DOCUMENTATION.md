@@ -323,7 +323,7 @@ PATCH /api/enrollments/:id/status
 GET /api/students/active
 ```
 **Access:** Tutor, Admin, Manager  
-**Description:** Get all students with active enrollments.
+**Description:** Get all active students in the system.
 
 ### Get Student Rollover Hours
 ```
@@ -344,7 +344,7 @@ GET /api/students/:studentId/enrolled-courses
 GET /api/tutor/active-students
 ```
 **Access:** Tutor, Admin, Manager  
-**Description:** Get students actively enrolled in tutor's courses.
+**Description:** Get all active students available for tutor enrollment.
 
 ### Get All Students for Tutor
 ```
@@ -502,6 +502,14 @@ GET /api/announcements
 ```
 **Access:** Authenticated  
 **Description:** Get all announcements visible to the user.
+
+**Response:**
+```json
+{
+  "announcements": [],
+  "courses": []
+}
+```
 
 ### Get Course Announcements
 ```
