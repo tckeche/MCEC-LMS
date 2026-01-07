@@ -12,6 +12,8 @@ import {
   chatThreads,
   chatParticipants,
   chatMessages,
+  reports,
+  disputes,
   tutorAvailability,
   sessionProposals,
   tutoringSessions,
@@ -47,6 +49,15 @@ import {
   type ChatMessage,
   type InsertChatMessage,
   type ChatUserSummary,
+  type Report,
+  type InsertReport,
+  type ReportWithDetails,
+  type Dispute,
+  type InsertDispute,
+  type DisputeStatus,
+  type DisputeTargetType,
+  type ReportStatus,
+  type ReportType,
   type CourseWithTutor,
   type CourseWithEnrollmentCount,
   type EnrollmentWithDetails,
@@ -217,6 +228,28 @@ export interface IStorage {
   isChatParticipant(threadId: string, userId: string): Promise<boolean>;
   createChatMessage(message: InsertChatMessage): Promise<ChatMessage>;
   deleteChatMessagesBefore(cutoff: Date): Promise<number>;
+
+  // Reporting & dispute operations
+  createReport(report: InsertReport): Promise<Report>;
+  getReport(id: string): Promise<Report | undefined>;
+  getReportWithDetails(id: string): Promise<ReportWithDetails | undefined>;
+  getReportsWithDetails(filters?: {
+    type?: ReportType;
+    status?: ReportStatus;
+    tutorId?: string;
+    studentId?: string;
+    studentIds?: string[];
+    month?: string;
+  }): Promise<ReportWithDetails[]>;
+  updateReport(id: string, updates: Partial<Report>): Promise<Report | undefined>;
+  createDispute(dispute: InsertDispute): Promise<Dispute>;
+  getDispute(id: string): Promise<Dispute | undefined>;
+  getDisputes(filters?: {
+    status?: DisputeStatus;
+    targetType?: DisputeTargetType;
+    createdById?: string;
+  }): Promise<Dispute[]>;
+  updateDispute(id: string, updates: Partial<Dispute>): Promise<Dispute | undefined>;
 
   // Helper to get enrolled students for a course (for notifications)
   getEnrolledStudentIds(courseId: string): Promise<string[]>;
@@ -1494,6 +1527,115 @@ export class DatabaseStorage implements IStorage {
   async deleteChatMessagesBefore(cutoff: Date): Promise<number> {
     const result = await db.delete(chatMessages).where(lt(chatMessages.createdAt, cutoff)).returning();
     return result.length;
+  }
+
+  // Reporting & dispute operations
+  async createReport(report: InsertReport): Promise<Report> {
+    const [created] = await db.insert(reports).values(report).returning();
+    return created;
+  }
+
+  async getReport(id: string): Promise<Report | undefined> {
+    const [report] = await db.select().from(reports).where(eq(reports.id, id));
+    return report;
+  }
+
+  async getReportWithDetails(id: string): Promise<ReportWithDetails | undefined> {
+    const [report] = await db.select().from(reports).where(eq(reports.id, id));
+    if (!report) return undefined;
+
+    const [createdBy] = await db.select().from(users).where(eq(users.id, report.createdById));
+    const [student] = report.studentId
+      ? await db.select().from(users).where(eq(users.id, report.studentId))
+      : [null];
+    const [approvedBy] = report.approvedById
+      ? await db.select().from(users).where(eq(users.id, report.approvedById))
+      : [null];
+    const [session] = report.sessionId
+      ? await db.select().from(tutoringSessions).where(eq(tutoringSessions.id, report.sessionId))
+      : [null];
+
+    return {
+      ...report,
+      createdBy,
+      student,
+      approvedBy,
+      session,
+    };
+  }
+
+  async getReportsWithDetails(filters?: {
+    type?: ReportType;
+    status?: ReportStatus;
+    tutorId?: string;
+    studentId?: string;
+    studentIds?: string[];
+    month?: string;
+  }): Promise<ReportWithDetails[]> {
+    const conditions = [];
+    if (filters?.type) conditions.push(eq(reports.type, filters.type));
+    if (filters?.status) conditions.push(eq(reports.status, filters.status));
+    if (filters?.tutorId) conditions.push(eq(reports.createdById, filters.tutorId));
+    if (filters?.studentId) conditions.push(eq(reports.studentId, filters.studentId));
+    if (filters?.studentIds?.length) conditions.push(inArray(reports.studentId, filters.studentIds));
+    if (filters?.month) conditions.push(eq(reports.month, filters.month));
+
+    const query = conditions.length > 0
+      ? db.select().from(reports).where(and(...conditions)).orderBy(desc(reports.createdAt))
+      : db.select().from(reports).orderBy(desc(reports.createdAt));
+
+    const reportRows = await query;
+    const results: ReportWithDetails[] = [];
+    for (const report of reportRows) {
+      const details = await this.getReportWithDetails(report.id);
+      if (details) results.push(details);
+    }
+    return results;
+  }
+
+  async updateReport(id: string, updates: Partial<Report>): Promise<Report | undefined> {
+    const [updated] = await db
+      .update(reports)
+      .set({ ...updates, updatedAt: new Date() })
+      .where(eq(reports.id, id))
+      .returning();
+    return updated;
+  }
+
+  async createDispute(dispute: InsertDispute): Promise<Dispute> {
+    const [created] = await db.insert(disputes).values(dispute).returning();
+    return created;
+  }
+
+  async getDispute(id: string): Promise<Dispute | undefined> {
+    const [dispute] = await db.select().from(disputes).where(eq(disputes.id, id));
+    return dispute;
+  }
+
+  async getDisputes(filters?: {
+    status?: DisputeStatus;
+    targetType?: DisputeTargetType;
+    createdById?: string;
+  }): Promise<Dispute[]> {
+    const conditions = [];
+    if (filters?.status) conditions.push(eq(disputes.status, filters.status));
+    if (filters?.targetType) conditions.push(eq(disputes.targetType, filters.targetType));
+    if (filters?.createdById) conditions.push(eq(disputes.createdById, filters.createdById));
+
+    const query = conditions.length > 0
+      ? db.select().from(disputes).where(and(...conditions)).orderBy(desc(disputes.createdAt))
+      : db.select().from(disputes).orderBy(desc(disputes.createdAt));
+
+    return query;
+  }
+
+  async updateDispute(id: string, updates: Partial<Dispute>): Promise<Dispute | undefined> {
+    const [updated] = await db
+      .update(disputes)
+      .set({ ...updates, updatedAt: new Date() })
+      .where(eq(disputes.id, id))
+      .returning();
+    return updated;
   }
 
   async getEnrolledStudentIds(courseId: string): Promise<string[]> {

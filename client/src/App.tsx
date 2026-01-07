@@ -54,6 +54,8 @@ import SuperAdminUsers from "@/pages/admin/super-admin-users";
 import AdminWallets from "@/pages/admin/wallets";
 import Announcements from "@/pages/announcements";
 import ChatPage from "@/pages/chat";
+import ReportsPage from "@/pages/reports";
+import DisputesPage from "@/pages/disputes";
 
 function LoadingScreen() {
   return (
@@ -150,6 +152,8 @@ function StudentRoutes() {
     <Switch>
       <Route path="/" component={StudentDashboard} />
       <Route path="/chat" component={ChatPage} />
+      <Route path="/reports" component={ReportsPage} />
+      <Route path="/disputes" component={DisputesPage} />
       <Route path="/courses" component={StudentCourses} />
       <Route path="/assignments" component={StudentAssignments} />
       <Route path="/grades" component={StudentGrades} />
@@ -165,6 +169,8 @@ function ParentRoutes() {
     <Switch>
       <Route path="/" component={ParentDashboard} />
       <Route path="/chat" component={ChatPage} />
+      <Route path="/reports" component={ReportsPage} />
+      <Route path="/disputes" component={DisputesPage} />
       <Route path="/courses" component={StudentCourses} />
       <Route path="/grades" component={StudentGrades} />
       <Route path="/invoices" component={ParentInvoices} />
@@ -179,6 +185,8 @@ function TutorRoutes() {
     <Switch>
       <Route path="/" component={TutorDashboard} />
       <Route path="/chat" component={ChatPage} />
+      <Route path="/reports" component={ReportsPage} />
+      <Route path="/disputes" component={DisputesPage} />
       <Route path="/tutor/courses" component={TutorCourses} />
       <Route path="/tutor/courses/:id" component={TutorCourseDetail} />
       <Route path="/tutor/gradebook" component={TutorGradebook} />
@@ -198,6 +206,8 @@ function ManagerRoutes() {
       <Route path="/" component={ManagerDashboard} />
       <Route path="/manager/overview" component={ManagerDashboard} />
       <Route path="/chat" component={ChatPage} />
+      <Route path="/reports" component={ReportsPage} />
+      <Route path="/disputes" component={DisputesPage} />
       <Route path="/manager/tutors" component={ManagerTutors} />
       <Route path="/manager/courses" component={ManagerCourses} />
       <Route path="/manager/courses/:courseId" component={ManagerCourseDetail} />
@@ -214,6 +224,8 @@ function AdminRoutes() {
       <Route path="/" component={AdminDashboard} />
       <Route path="/admin" component={AdminDashboard} />
       <Route path="/chat" component={ChatPage} />
+      <Route path="/reports" component={ReportsPage} />
+      <Route path="/disputes" component={DisputesPage} />
       <Route path="/admin/users" component={AdminUsers} />
       <Route path="/admin/wallets" component={AdminWallets} />
       <Route path="/admin/invoices" component={AdminInvoices} />
