@@ -2286,7 +2286,7 @@ export async function registerRoutes(
         if (childIds.length === 0) return res.json([]);
 
         const reports = await storage.getReportsWithDetails({
-          type: "session",
+          type: filters.type,
           status: filters.status,
           month: filters.month,
           studentIds: childIds,
@@ -2296,7 +2296,7 @@ export async function registerRoutes(
 
       if (activeUser.user.role === "student") {
         const reports = await storage.getReportsWithDetails({
-          type: "session",
+          type: filters.type,
           status: filters.status,
           month: filters.month,
           studentId: activeUser.userId,
@@ -2358,7 +2358,7 @@ export async function registerRoutes(
       }
 
       const payload = insertReportSchema
-        .pick({ type: true, title: true, content: true, month: true, sessionId: true, studentId: true })
+        .pick({ type: true, title: true, content: true, month: true, sessionId: true, studentId: true, courseId: true })
         .extend({
           type: z.enum(["session", "monthly"]),
           title: z.string().min(3).max(255),
@@ -2366,25 +2366,12 @@ export async function registerRoutes(
           month: z.string().regex(/^\d{4}-\d{2}$/).optional(),
           sessionId: z.string().optional(),
           studentId: z.string().optional(),
+          courseId: z.string().optional(),
         })
         .parse(req.body);
 
-      if (payload.type === "monthly") {
-        if (!payload.month) {
-          return res.status(400).json({ message: "Month is required for monthly reports" });
-        }
-
-        const existing = await storage.getReportsWithDetails({
-          type: "monthly",
-          tutorId: dbUser.id,
-          month: payload.month,
-        });
-        if (existing.length > 0) {
-          return res.status(409).json({ message: "Monthly report already exists for this period" });
-        }
-      }
-
       let sessionStudentId: string | null = null;
+      let sessionCourseId: string | null = null;
 
       if (payload.type === "session") {
         if (!payload.sessionId) {
@@ -2399,14 +2386,49 @@ export async function registerRoutes(
           return res.status(400).json({ message: "Session is missing a student assignment" });
         }
         sessionStudentId = session.studentId;
+        sessionCourseId = session.courseId;
 
         const existing = await storage.getReportsWithDetails({
           type: "session",
           tutorId: dbUser.id,
           studentId: sessionStudentId,
+          courseId: sessionCourseId ?? undefined,
         });
         if (existing.some((report) => report.sessionId === payload.sessionId)) {
           return res.status(409).json({ message: "Session report already exists" });
+        }
+      }
+
+      if (payload.type === "monthly") {
+        if (!payload.month) {
+          return res.status(400).json({ message: "Month is required for monthly reports" });
+        }
+        if (!payload.studentId || !payload.courseId) {
+          return res.status(400).json({ message: "Student and course are required for monthly reports" });
+        }
+
+        const course = await storage.getCourse(payload.courseId);
+        if (!course || course.tutorId !== dbUser.id) {
+          return res.status(403).json({ message: "Invalid course for report" });
+        }
+
+        const enrollments = await storage.getEnrollmentsByCourse(payload.courseId);
+        const isEnrolled = enrollments.some(
+          (enrollment) => enrollment.studentId === payload.studentId && enrollment.status !== "dropped",
+        );
+        if (!isEnrolled) {
+          return res.status(403).json({ message: "Student is not enrolled in this course" });
+        }
+
+        const existing = await storage.getReportsWithDetails({
+          type: "monthly",
+          tutorId: dbUser.id,
+          month: payload.month,
+          studentId: payload.studentId,
+          courseId: payload.courseId,
+        });
+        if (existing.length > 0) {
+          return res.status(409).json({ message: "Monthly report already exists for this student and course" });
         }
       }
 
@@ -2416,7 +2438,8 @@ export async function registerRoutes(
         content: payload.content,
         month: payload.month,
         sessionId: payload.sessionId ?? null,
-        studentId: payload.type === "session" ? sessionStudentId : null,
+        studentId: payload.type === "session" ? sessionStudentId : payload.studentId ?? null,
+        courseId: payload.type === "session" ? sessionCourseId : payload.courseId ?? null,
         createdById: dbUser.id,
       });
 

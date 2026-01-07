@@ -1298,7 +1298,7 @@ export class DatabaseStorage implements IStorage {
         .where(and(
           eq(courses.tutorId, userId),
           eq(courses.isActive, true),
-          eq(enrollments.status, "active")
+          inArray(enrollments.status, ["active", "pending", "completed"])
         ));
       studentIds = Array.from(new Set(studentRows.map((row) => row.studentId)));
 
@@ -1318,7 +1318,7 @@ export class DatabaseStorage implements IStorage {
         .innerJoin(courses, eq(enrollments.courseId, courses.id))
         .where(and(
           eq(enrollments.studentId, userId),
-          eq(enrollments.status, "active"),
+          inArray(enrollments.status, ["active", "pending", "completed"]),
           eq(courses.isActive, true)
         ));
       tutorIds = Array.from(new Set(tutorRows.map((row) => row.tutorId)));
@@ -1338,7 +1338,7 @@ export class DatabaseStorage implements IStorage {
           .innerJoin(courses, eq(enrollments.courseId, courses.id))
           .where(and(
             inArray(enrollments.studentId, childIds),
-            eq(enrollments.status, "active"),
+            inArray(enrollments.status, ["active", "pending", "completed"]),
             eq(courses.isActive, true)
           ));
         tutorIds = Array.from(new Set(tutorRows.map((row) => row.tutorId)));
@@ -1554,6 +1554,9 @@ export class DatabaseStorage implements IStorage {
     const [session] = report.sessionId
       ? await db.select().from(tutoringSessions).where(eq(tutoringSessions.id, report.sessionId))
       : [null];
+    const [course] = report.courseId
+      ? await db.select().from(courses).where(eq(courses.id, report.courseId))
+      : [null];
 
     return {
       ...report,
@@ -1561,6 +1564,7 @@ export class DatabaseStorage implements IStorage {
       student,
       approvedBy,
       session,
+      course,
     };
   }
 
@@ -1570,6 +1574,7 @@ export class DatabaseStorage implements IStorage {
     tutorId?: string;
     studentId?: string;
     studentIds?: string[];
+    courseId?: string;
     month?: string;
   }): Promise<ReportWithDetails[]> {
     const conditions = [];
@@ -1578,6 +1583,7 @@ export class DatabaseStorage implements IStorage {
     if (filters?.tutorId) conditions.push(eq(reports.createdById, filters.tutorId));
     if (filters?.studentId) conditions.push(eq(reports.studentId, filters.studentId));
     if (filters?.studentIds?.length) conditions.push(inArray(reports.studentId, filters.studentIds));
+    if (filters?.courseId) conditions.push(eq(reports.courseId, filters.courseId));
     if (filters?.month) conditions.push(eq(reports.month, filters.month));
 
     const query = conditions.length > 0

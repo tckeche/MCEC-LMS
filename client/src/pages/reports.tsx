@@ -30,6 +30,7 @@ type ReportDetails = {
   month?: string | null;
   sessionId?: string | null;
   studentId?: string | null;
+  courseId?: string | null;
   createdById: string;
   submittedAt?: string | null;
   approvedAt?: string | null;
@@ -37,6 +38,7 @@ type ReportDetails = {
   createdAt: string;
   updatedAt: string;
   createdBy: ReportAuthor;
+  course?: { id: string; title: string } | null;
 };
 
 type TutorSession = {
@@ -45,6 +47,15 @@ type TutorSession = {
   studentName: string;
   scheduledStartTime: string;
   status: string;
+};
+
+type TutorStudentCourse = {
+  student: ReportAuthor;
+  courseName: string;
+  enrollment: {
+    courseId: string;
+    studentId: string;
+  };
 };
 
 const statusClasses: Record<ReportStatus, string> = {
@@ -68,6 +79,7 @@ export default function ReportsPage() {
   const [content, setContent] = useState("");
   const [month, setMonth] = useState("");
   const [sessionId, setSessionId] = useState("");
+  const [studentCourseKey, setStudentCourseKey] = useState("");
   const [rejectionReason, setRejectionReason] = useState("");
   const [rejectingReportId, setRejectingReportId] = useState<string | null>(null);
 
@@ -80,23 +92,31 @@ export default function ReportsPage() {
     enabled: user?.role === "tutor",
   });
 
+  const { data: tutorStudents } = useQuery<{ students: TutorStudentCourse[] }>({
+    queryKey: ["/api/tutor/students"],
+    enabled: user?.role === "tutor",
+  });
+
   const sessionOptions = useMemo(
     () => tutorSessions.filter((session) => session.status !== "cancelled"),
     [tutorSessions],
   );
+
+  const studentCourseOptions = useMemo(() => tutorStudents?.students ?? [], [tutorStudents]);
 
   const createReportMutation = useMutation({
     mutationFn: async () => {
       const payload: Record<string, string> = { type: reportType, title, content };
       if (reportType === "monthly") {
         payload.month = month;
+        if (studentCourseKey) {
+          const [studentId, courseId] = studentCourseKey.split(":");
+          payload.studentId = studentId;
+          payload.courseId = courseId;
+        }
       }
       if (reportType === "session") {
         payload.sessionId = sessionId;
-        const selectedSession = sessionOptions.find((session) => session.id === sessionId);
-        if (selectedSession) {
-          payload.studentId = selectedSession.studentId;
-        }
       }
       const res = await apiRequest("POST", "/api/reports", payload);
       return res.json();
@@ -107,6 +127,7 @@ export default function ReportsPage() {
       setContent("");
       setMonth("");
       setSessionId("");
+      setStudentCourseKey("");
       queryClient.invalidateQueries({ queryKey: ["/api/reports"] });
     },
     onError: (error: Error) => {
@@ -164,16 +185,17 @@ export default function ReportsPage() {
     <div className="min-h-full bg-background p-6">
       <div className="space-y-6">
         <div className="flex flex-col gap-2">
-          <h1 className="text-2xl font-semibold">Reports</h1>
+          <h1 className="text-2xl font-semibold">Progress reports</h1>
           <p className="text-sm text-muted-foreground">
-            Narrative reports are visible only to authorized roles. Monthly tutor reports require approval.
+            Progress reports summarize student learning for each course and are visible only to authorized roles. Monthly
+            reports require approval.
           </p>
         </div>
 
         {user?.role === "tutor" && (
           <Card>
             <CardHeader>
-              <CardTitle>Create a report</CardTitle>
+              <CardTitle>Create a progress report</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="grid gap-4 md:grid-cols-2">
@@ -184,21 +206,46 @@ export default function ReportsPage() {
                       <SelectValue placeholder="Select report type" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="session">Session report</SelectItem>
-                      <SelectItem value="monthly">Monthly report</SelectItem>
+                      <SelectItem value="session">Session progress report</SelectItem>
+                      <SelectItem value="monthly">Monthly progress report</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
                 {reportType === "monthly" ? (
-                  <div className="space-y-2">
-                    <Label htmlFor="month">Month</Label>
-                    <Input
-                      id="month"
-                      type="month"
-                      value={month}
-                      onChange={(event) => setMonth(event.target.value)}
-                    />
-                  </div>
+                  <>
+                    <div className="space-y-2">
+                      <Label htmlFor="month">Month</Label>
+                      <Input
+                        id="month"
+                        type="month"
+                        value={month}
+                        onChange={(event) => setMonth(event.target.value)}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Student & course</Label>
+                      <Select value={studentCourseKey} onValueChange={setStudentCourseKey}>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select a student and course" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {studentCourseOptions.length === 0 && (
+                            <SelectItem value="none" disabled>
+                              No students available
+                            </SelectItem>
+                          )}
+                          {studentCourseOptions.map((entry) => {
+                            const key = `${entry.enrollment.studentId}:${entry.enrollment.courseId}`;
+                            return (
+                              <SelectItem key={key} value={key}>
+                                {formatUserName(entry.student)} • {entry.courseName}
+                              </SelectItem>
+                            );
+                          })}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </>
                 ) : (
                   <div className="space-y-2">
                     <Label>Session</Label>
@@ -228,17 +275,17 @@ export default function ReportsPage() {
                   id="title"
                   value={title}
                   onChange={(event) => setTitle(event.target.value)}
-                  placeholder="Report title"
+                  placeholder="Progress report title"
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="content">Narrative</Label>
+                <Label htmlFor="content">Progress notes</Label>
                 <Textarea
                   id="content"
                   rows={5}
                   value={content}
                   onChange={(event) => setContent(event.target.value)}
-                  placeholder="Write the narrative report..."
+                  placeholder="Write the progress report..."
                 />
               </div>
               <div className="flex justify-end">
@@ -248,7 +295,7 @@ export default function ReportsPage() {
                     createReportMutation.isPending ||
                     !title.trim() ||
                     !content.trim() ||
-                    (reportType === "monthly" && !month) ||
+                    (reportType === "monthly" && (!month || !studentCourseKey)) ||
                     (reportType === "session" && !sessionId)
                   }
                 >
@@ -261,7 +308,7 @@ export default function ReportsPage() {
 
         <Card>
           <CardHeader>
-            <CardTitle>Report inbox</CardTitle>
+            <CardTitle>Progress report inbox</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
             {isLoading ? (
@@ -282,7 +329,10 @@ export default function ReportsPage() {
                       <div>
                         <p className="text-sm font-semibold">{report.title}</p>
                         <p className="text-xs text-muted-foreground">
-                          {report.type === "monthly" ? `Month: ${report.month}` : "Session report"} • Author: {formatUserName(report.createdBy)}
+                          {report.type === "monthly"
+                            ? `Month: ${report.month ?? "Unknown"}`
+                            : "Session progress report"}{" "}
+                          {report.course?.title ? `• ${report.course.title}` : ""} • Author: {formatUserName(report.createdBy)}
                         </p>
                       </div>
                       <span className={`inline-flex rounded-full px-2 py-1 text-xs font-medium ${statusClasses[report.status]}`}>

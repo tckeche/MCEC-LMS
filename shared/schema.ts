@@ -470,6 +470,7 @@ export const reports = pgTable(
     month: varchar("month", { length: 7 }),
     sessionId: varchar("session_id").references(() => tutoringSessions.id, { onDelete: "set null" }),
     studentId: varchar("student_id").references(() => users.id, { onDelete: "set null" }),
+    courseId: varchar("course_id").references(() => courses.id, { onDelete: "set null" }),
     createdById: varchar("created_by_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
@@ -485,6 +486,7 @@ export const reports = pgTable(
     index("IDX_reports_created_by").on(table.createdById),
     index("IDX_reports_student").on(table.studentId),
     index("IDX_reports_session").on(table.sessionId),
+    index("IDX_reports_course").on(table.courseId),
     index("IDX_reports_month").on(table.month),
   ],
 );
@@ -879,6 +881,10 @@ export const reportsRelations = relations(reports, ({ one }) => ({
     fields: [reports.sessionId],
     references: [tutoringSessions.id],
   }),
+  course: one(courses, {
+    fields: [reports.courseId],
+    references: [courses.id],
+  }),
   student: one(users, {
     fields: [reports.studentId],
     references: [users.id],
@@ -1211,6 +1217,7 @@ export type ReportWithDetails = Report & {
   createdBy: User;
   approvedBy?: User | null;
   session?: TutoringSession | null;
+  course?: Course | null;
 };
 
 // User role type for type safety

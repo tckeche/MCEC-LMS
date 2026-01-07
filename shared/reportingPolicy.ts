@@ -19,7 +19,7 @@ export function canViewReport(context: ReportVisibilityContext): boolean {
   if (role === "admin" || role === "manager") return true;
 
   if (reportType === "monthly") {
-    return role === "tutor" && isOwner;
+    return (role === "tutor" && isOwner) || (role === "student" && isStudent) || (role === "parent" && isParent);
   }
 
   return (role === "tutor" && isOwner) || (role === "student" && isStudent) || (role === "parent" && isParent);

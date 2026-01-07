@@ -28,7 +28,9 @@ describe("reportingPolicy", () => {
     expect(canViewReport({ role: "parent", reportType: "session", isOwner: false, isStudent: false, isParent: true }))
       .toBe(true);
     expect(canViewReport({ role: "parent", reportType: "monthly", isOwner: false, isStudent: false, isParent: true }))
-      .toBe(false);
+      .toBe(true);
+    expect(canViewReport({ role: "student", reportType: "monthly", isOwner: false, isStudent: true, isParent: false }))
+      .toBe(true);
   });
 
   it("handles report transitions", () => {
