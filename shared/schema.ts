@@ -118,6 +118,32 @@ export const tutoringSessionStatusEnum = pgEnum("tutoring_session_status", [
   "cancelled",
 ]);
 
+// Reporting & dispute enums
+export const reportTypeEnum = pgEnum("report_type", [
+  "session",
+  "monthly",
+]);
+
+export const reportStatusEnum = pgEnum("report_status", [
+  "draft",
+  "submitted",
+  "approved",
+  "rejected",
+]);
+
+export const disputeTargetTypeEnum = pgEnum("dispute_target_type", [
+  "session",
+  "invoice",
+  "report",
+]);
+
+export const disputeStatusEnum = pgEnum("dispute_status", [
+  "open",
+  "under_review",
+  "resolved",
+  "rejected",
+]);
+
 // Session storage table (mandatory for Replit Auth)
 export const sessions = pgTable(
   "sessions",
@@ -429,6 +455,64 @@ export const sessionAttendance = pgTable("session_attendance", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
+// ==========================================
+// REPORTING & DISPUTES
+// ==========================================
+
+export const reports = pgTable(
+  "reports",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    type: reportTypeEnum("type").notNull(),
+    status: reportStatusEnum("status").default("draft").notNull(),
+    title: varchar("title", { length: 255 }).notNull(),
+    content: text("content").notNull(),
+    month: varchar("month", { length: 7 }),
+    sessionId: varchar("session_id").references(() => tutoringSessions.id, { onDelete: "set null" }),
+    studentId: varchar("student_id").references(() => users.id, { onDelete: "set null" }),
+    createdById: varchar("created_by_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    submittedAt: timestamp("submitted_at"),
+    approvedById: varchar("approved_by_id").references(() => users.id),
+    approvedAt: timestamp("approved_at"),
+    rejectionReason: text("rejection_reason"),
+    createdAt: timestamp("created_at").defaultNow(),
+    updatedAt: timestamp("updated_at").defaultNow(),
+  },
+  (table) => [
+    index("IDX_reports_type_status").on(table.type, table.status),
+    index("IDX_reports_created_by").on(table.createdById),
+    index("IDX_reports_student").on(table.studentId),
+    index("IDX_reports_session").on(table.sessionId),
+    index("IDX_reports_month").on(table.month),
+  ],
+);
+
+export const disputes = pgTable(
+  "disputes",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    targetType: disputeTargetTypeEnum("target_type").notNull(),
+    targetId: varchar("target_id").notNull(),
+    status: disputeStatusEnum("status").default("open").notNull(),
+    reason: text("reason").notNull(),
+    resolutionNotes: text("resolution_notes"),
+    createdById: varchar("created_by_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    resolvedById: varchar("resolved_by_id").references(() => users.id),
+    resolvedAt: timestamp("resolved_at"),
+    createdAt: timestamp("created_at").defaultNow(),
+    updatedAt: timestamp("updated_at").defaultNow(),
+  },
+  (table) => [
+    index("IDX_disputes_target").on(table.targetType, table.targetId),
+    index("IDX_disputes_status").on(table.status),
+    index("IDX_disputes_created_by").on(table.createdById),
+  ],
+);
+
 // Hour Wallets (purchased hours per student-course)
 export const hourWallets = pgTable("hour_wallets", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -606,6 +690,10 @@ export const usersRelations = relations(users, ({ many }) => ({
   notifications: many(notifications),
   chatParticipants: many(chatParticipants),
   chatMessages: many(chatMessages),
+  reportsAuthored: many(reports, { relationName: "reportAuthor" }),
+  reportsApproved: many(reports, { relationName: "reportApprover" }),
+  disputesCreated: many(disputes, { relationName: "disputeCreator" }),
+  disputesResolved: many(disputes, { relationName: "disputeResolver" }),
   parentOf: many(parentChildren, { relationName: "parent" }),
   childOf: many(parentChildren, { relationName: "child" }),
 }));
@@ -785,6 +873,42 @@ export const sessionAttendanceRelations = relations(sessionAttendance, ({ one })
   }),
 }));
 
+// Reporting & disputes relations
+export const reportsRelations = relations(reports, ({ one }) => ({
+  session: one(tutoringSessions, {
+    fields: [reports.sessionId],
+    references: [tutoringSessions.id],
+  }),
+  student: one(users, {
+    fields: [reports.studentId],
+    references: [users.id],
+    relationName: "reportStudent",
+  }),
+  createdBy: one(users, {
+    fields: [reports.createdById],
+    references: [users.id],
+    relationName: "reportAuthor",
+  }),
+  approvedBy: one(users, {
+    fields: [reports.approvedById],
+    references: [users.id],
+    relationName: "reportApprover",
+  }),
+}));
+
+export const disputesRelations = relations(disputes, ({ one }) => ({
+  createdBy: one(users, {
+    fields: [disputes.createdById],
+    references: [users.id],
+    relationName: "disputeCreator",
+  }),
+  resolvedBy: one(users, {
+    fields: [disputes.resolvedById],
+    references: [users.id],
+    relationName: "disputeResolver",
+  }),
+}));
+
 // Financial system relations
 export const invoicesRelations = relations(invoices, ({ one, many }) => ({
   parent: one(users, {
@@ -945,6 +1069,27 @@ export const insertChatMessageSchema = createInsertSchema(chatMessages).omit({
   createdAt: true,
 });
 
+export const insertReportSchema = createInsertSchema(reports).omit({
+  id: true,
+  status: true,
+  submittedAt: true,
+  approvedById: true,
+  approvedAt: true,
+  rejectionReason: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const insertDisputeSchema = createInsertSchema(disputes).omit({
+  id: true,
+  status: true,
+  resolutionNotes: true,
+  resolvedById: true,
+  resolvedAt: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
 // Scheduling system insert schemas
 export const insertTutorAvailabilitySchema = createInsertSchema(tutorAvailability).omit({
   id: true,
@@ -1009,6 +1154,16 @@ export type ChatMessage = typeof chatMessages.$inferSelect;
 export type InsertChatMessage = z.infer<typeof insertChatMessageSchema>;
 export type ChatUserSummary = Pick<User, "id" | "firstName" | "lastName" | "email" | "role" | "profileImageUrl">;
 
+export type Report = typeof reports.$inferSelect;
+export type InsertReport = z.infer<typeof insertReportSchema>;
+export type Dispute = typeof disputes.$inferSelect;
+export type InsertDispute = z.infer<typeof insertDisputeSchema>;
+
+export type ReportType = "session" | "monthly";
+export type ReportStatus = "draft" | "submitted" | "approved" | "rejected";
+export type DisputeTargetType = "session" | "invoice" | "report";
+export type DisputeStatus = "open" | "under_review" | "resolved" | "rejected";
+
 // Extended types for frontend use
 export type CourseWithTutor = Course & {
   tutor: User;
@@ -1049,6 +1204,13 @@ export type AnnouncementWithAuthor = Announcement & {
 export type ParentChildWithDetails = ParentChild & {
   parent: User;
   child: User;
+};
+
+export type ReportWithDetails = Report & {
+  student?: User | null;
+  createdBy: User;
+  approvedBy?: User | null;
+  session?: TutoringSession | null;
 };
 
 // User role type for type safety

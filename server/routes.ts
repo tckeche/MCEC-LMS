@@ -25,13 +25,20 @@ import {
   insertPayoutSchema,
   insertPayoutLineSchema,
   insertPayoutFlagSchema,
-  insertChatMessageSchema,
+  insertReportSchema,
+  insertDisputeSchema,
   type UserRole,
   type ProposalStatus,
   type TutoringSessionStatus,
   type InvoiceStatus,
   type PayoutStatus,
+  type ReportStatus,
+  type ReportType,
+  type DisputeStatus,
+  type DisputeTargetType,
 } from "@shared/schema";
+import { getMessagingRetentionCutoff } from "@shared/messagingPolicy";
+import { canApproveReport, canEditReport, canResolveDispute, canSubmitReport, canViewReport } from "@shared/reportingPolicy";
 import { z } from "zod";
 import PDFDocument from "pdfkit";
 
@@ -101,6 +108,38 @@ async function refundWalletWithAudit(
 
 function getDbUser(req: Request) {
   return (req as any).dbUser;
+}
+
+async function getActiveMessagingUser(req: Request, res: Response) {
+  const userId = req.user?.claims?.sub;
+  if (!userId) {
+    res.status(401).json({ message: "Unauthorized" });
+    return null;
+  }
+
+  const user = await storage.getUser(userId);
+  if (!user || !user.isActive || user.status !== "active") {
+    res.status(403).json({ message: "Access denied" });
+    return null;
+  }
+
+  return { userId, user };
+}
+
+async function getActiveUser(req: Request, res: Response) {
+  const userId = req.user?.claims?.sub;
+  if (!userId) {
+    res.status(401).json({ message: "Unauthorized" });
+    return null;
+  }
+
+  const user = await storage.getUser(userId);
+  if (!user || !user.isActive || user.status !== "active") {
+    res.status(403).json({ message: "Access denied" });
+    return null;
+  }
+
+  return { userId, user };
 }
 
 
@@ -2205,17 +2244,599 @@ export async function registerRoutes(
   });
 
   // ==========================================
+  // REPORTS & DISPUTES
+  // ==========================================
+
+  const reportQuerySchema = z.object({
+    type: z.enum(["session", "monthly"]).optional(),
+    status: z.enum(["draft", "submitted", "approved", "rejected"]).optional(),
+    month: z.string().regex(/^\d{4}-\d{2}$/).optional(),
+  });
+
+  // List reports
+  app.get('/api/reports', isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const activeUser = await getActiveUser(req, res);
+      if (!activeUser) return;
+
+      const filters = reportQuerySchema.parse(req.query);
+
+      if (activeUser.user.role === "admin" || activeUser.user.role === "manager") {
+        const reports = await storage.getReportsWithDetails({
+          type: filters.type,
+          status: filters.status,
+          month: filters.month,
+        });
+        return res.json(reports);
+      }
+
+      if (activeUser.user.role === "tutor") {
+        const reports = await storage.getReportsWithDetails({
+          type: filters.type,
+          status: filters.status,
+          month: filters.month,
+          tutorId: activeUser.userId,
+        });
+        return res.json(reports);
+      }
+
+      if (activeUser.user.role === "parent") {
+        const relationships = await storage.getParentChildren(activeUser.userId);
+        const childIds = relationships.map((rel) => rel.childId);
+        if (childIds.length === 0) return res.json([]);
+
+        const reports = await storage.getReportsWithDetails({
+          type: "session",
+          status: filters.status,
+          month: filters.month,
+          studentIds: childIds,
+        });
+        return res.json(reports);
+      }
+
+      if (activeUser.user.role === "student") {
+        const reports = await storage.getReportsWithDetails({
+          type: "session",
+          status: filters.status,
+          month: filters.month,
+          studentId: activeUser.userId,
+        });
+        return res.json(reports);
+      }
+
+      return res.status(403).json({ message: "Access denied" });
+    } catch (error) {
+      console.error("Error fetching reports:", error);
+      res.status(500).json({ message: "Failed to fetch reports" });
+    }
+  });
+
+  // Get report details
+  app.get('/api/reports/:id', isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const activeUser = await getActiveUser(req, res);
+      if (!activeUser) return;
+
+      const report = await storage.getReportWithDetails(req.params.id);
+      if (!report) {
+        return res.status(404).json({ message: "Report not found" });
+      }
+
+      const isOwner = report.createdById === activeUser.userId;
+      const isStudent = report.studentId === activeUser.userId;
+      let isParent = false;
+      if (activeUser.user.role === "parent" && report.studentId) {
+        const relationships = await storage.getParentChildren(activeUser.userId);
+        isParent = relationships.some((rel) => rel.childId === report.studentId);
+      }
+
+      const allowed = canViewReport({
+        role: activeUser.user.role,
+        reportType: report.type,
+        isOwner,
+        isStudent,
+        isParent,
+      });
+
+      if (!allowed) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+
+      res.json(report);
+    } catch (error) {
+      console.error("Error fetching report:", error);
+      res.status(500).json({ message: "Failed to fetch report" });
+    }
+  });
+
+  // Create report (Tutor only)
+  app.post('/api/reports', isAuthenticated, requireRole("tutor"), async (req: Request, res: Response) => {
+    try {
+      const dbUser = getDbUser(req);
+      if (!dbUser) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+
+      const payload = insertReportSchema
+        .pick({ type: true, title: true, content: true, month: true, sessionId: true, studentId: true })
+        .extend({
+          type: z.enum(["session", "monthly"]),
+          title: z.string().min(3).max(255),
+          content: z.string().min(10),
+          month: z.string().regex(/^\d{4}-\d{2}$/).optional(),
+          sessionId: z.string().optional(),
+          studentId: z.string().optional(),
+        })
+        .parse(req.body);
+
+      if (payload.type === "monthly") {
+        if (!payload.month) {
+          return res.status(400).json({ message: "Month is required for monthly reports" });
+        }
+
+        const existing = await storage.getReportsWithDetails({
+          type: "monthly",
+          tutorId: dbUser.id,
+          month: payload.month,
+        });
+        if (existing.length > 0) {
+          return res.status(409).json({ message: "Monthly report already exists for this period" });
+        }
+      }
+
+      let sessionStudentId: string | null = null;
+
+      if (payload.type === "session") {
+        if (!payload.sessionId) {
+          return res.status(400).json({ message: "Session is required for session reports" });
+        }
+
+        const session = await storage.getTutoringSession(payload.sessionId);
+        if (!session || session.tutorId !== dbUser.id) {
+          return res.status(403).json({ message: "Invalid session for report" });
+        }
+        if (!session.studentId) {
+          return res.status(400).json({ message: "Session is missing a student assignment" });
+        }
+        sessionStudentId = session.studentId;
+
+        const existing = await storage.getReportsWithDetails({
+          type: "session",
+          tutorId: dbUser.id,
+          studentId: sessionStudentId,
+        });
+        if (existing.some((report) => report.sessionId === payload.sessionId)) {
+          return res.status(409).json({ message: "Session report already exists" });
+        }
+      }
+
+      const report = await storage.createReport({
+        type: payload.type,
+        title: payload.title,
+        content: payload.content,
+        month: payload.month,
+        sessionId: payload.sessionId ?? null,
+        studentId: payload.type === "session" ? sessionStudentId : null,
+        createdById: dbUser.id,
+      });
+
+      res.status(201).json(report);
+    } catch (error) {
+      console.error("Error creating report:", error);
+      res.status(500).json({ message: "Failed to create report" });
+    }
+  });
+
+  // Update report draft (Tutor only)
+  app.patch('/api/reports/:id', isAuthenticated, requireRole("tutor"), async (req: Request, res: Response) => {
+    try {
+      const dbUser = getDbUser(req);
+      if (!dbUser) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+
+      const report = await storage.getReport(req.params.id);
+      if (!report) {
+        return res.status(404).json({ message: "Report not found" });
+      }
+      if (report.createdById !== dbUser.id) {
+        return res.status(403).json({ message: "You can only edit your own reports" });
+      }
+      if (!canEditReport(report.status)) {
+        return res.status(400).json({ message: "Report cannot be edited in its current status" });
+      }
+
+      const updates = z.object({
+        title: z.string().min(3).max(255).optional(),
+        content: z.string().min(10).optional(),
+      }).parse(req.body);
+
+      const updated = await storage.updateReport(report.id, updates);
+      res.json(updated);
+    } catch (error) {
+      console.error("Error updating report:", error);
+      res.status(500).json({ message: "Failed to update report" });
+    }
+  });
+
+  // Submit report (Tutor only)
+  app.post('/api/reports/:id/submit', isAuthenticated, requireRole("tutor"), async (req: Request, res: Response) => {
+    try {
+      const dbUser = getDbUser(req);
+      if (!dbUser) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+
+      const report = await storage.getReport(req.params.id);
+      if (!report) {
+        return res.status(404).json({ message: "Report not found" });
+      }
+      if (report.createdById !== dbUser.id) {
+        return res.status(403).json({ message: "You can only submit your own reports" });
+      }
+      if (!canSubmitReport(report.status)) {
+        return res.status(400).json({ message: "Report cannot be submitted in its current status" });
+      }
+
+      const updated = await storage.updateReport(report.id, {
+        status: "submitted",
+        submittedAt: new Date(),
+        rejectionReason: null,
+      });
+      res.json(updated);
+    } catch (error) {
+      console.error("Error submitting report:", error);
+      res.status(500).json({ message: "Failed to submit report" });
+    }
+  });
+
+  // Approve report (Admin/Manager)
+  app.post('/api/reports/:id/approve', isAuthenticated, requireRole("admin", "manager"), async (req: Request, res: Response) => {
+    try {
+      const dbUser = getDbUser(req);
+      if (!dbUser) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+
+      const report = await storage.getReport(req.params.id);
+      if (!report) {
+        return res.status(404).json({ message: "Report not found" });
+      }
+      if (!canApproveReport(report.status)) {
+        return res.status(400).json({ message: "Report cannot be approved in its current status" });
+      }
+
+      const updated = await storage.updateReport(report.id, {
+        status: "approved",
+        approvedById: dbUser.id,
+        approvedAt: new Date(),
+        rejectionReason: null,
+      });
+
+      await storage.createAuditLog({
+        performedById: dbUser.id,
+        targetUserId: report.createdById,
+        action: "approve_report",
+        previousValue: report.status,
+        newValue: "approved",
+        metadata: { reportId: report.id, reportType: report.type },
+      });
+
+      res.json(updated);
+    } catch (error) {
+      console.error("Error approving report:", error);
+      res.status(500).json({ message: "Failed to approve report" });
+    }
+  });
+
+  // Reject report (Admin/Manager)
+  app.post('/api/reports/:id/reject', isAuthenticated, requireRole("admin", "manager"), async (req: Request, res: Response) => {
+    try {
+      const dbUser = getDbUser(req);
+      if (!dbUser) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+
+      const report = await storage.getReport(req.params.id);
+      if (!report) {
+        return res.status(404).json({ message: "Report not found" });
+      }
+      if (!canApproveReport(report.status)) {
+        return res.status(400).json({ message: "Report cannot be rejected in its current status" });
+      }
+
+      const payload = z.object({ rejectionReason: z.string().min(3) }).parse(req.body);
+
+      const updated = await storage.updateReport(report.id, {
+        status: "rejected",
+        rejectionReason: payload.rejectionReason,
+        approvedById: dbUser.id,
+        approvedAt: new Date(),
+      });
+
+      await storage.createAuditLog({
+        performedById: dbUser.id,
+        targetUserId: report.createdById,
+        action: "reject_report",
+        previousValue: report.status,
+        newValue: "rejected",
+        metadata: { reportId: report.id, reportType: report.type },
+      });
+
+      res.json(updated);
+    } catch (error) {
+      console.error("Error rejecting report:", error);
+      res.status(500).json({ message: "Failed to reject report" });
+    }
+  });
+
+  const disputeQuerySchema = z.object({
+    status: z.enum(["open", "under_review", "resolved", "rejected"]).optional(),
+    targetType: z.enum(["session", "invoice", "report"]).optional(),
+  });
+
+  // List disputes
+  app.get('/api/disputes', isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const activeUser = await getActiveUser(req, res);
+      if (!activeUser) return;
+
+      const filters = disputeQuerySchema.parse(req.query);
+      const baseFilters = {
+        status: filters.status as DisputeStatus | undefined,
+        targetType: filters.targetType as DisputeTargetType | undefined,
+      };
+
+      if (activeUser.user.role === "admin" || activeUser.user.role === "manager") {
+        const disputes = await storage.getDisputes(baseFilters);
+        return res.json(disputes);
+      }
+
+      const disputes = await storage.getDisputes({
+        ...baseFilters,
+        createdById: activeUser.userId,
+      });
+      return res.json(disputes);
+    } catch (error) {
+      console.error("Error fetching disputes:", error);
+      res.status(500).json({ message: "Failed to fetch disputes" });
+    }
+  });
+
+  // Get dispute details
+  app.get('/api/disputes/:id', isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const activeUser = await getActiveUser(req, res);
+      if (!activeUser) return;
+
+      const dispute = await storage.getDispute(req.params.id);
+      if (!dispute) {
+        return res.status(404).json({ message: "Dispute not found" });
+      }
+
+      if (dispute.createdById !== activeUser.userId && !["admin", "manager"].includes(activeUser.user.role)) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+
+      res.json(dispute);
+    } catch (error) {
+      console.error("Error fetching dispute:", error);
+      res.status(500).json({ message: "Failed to fetch dispute" });
+    }
+  });
+
+  // Create dispute
+  app.post('/api/disputes', isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const activeUser = await getActiveUser(req, res);
+      if (!activeUser) return;
+
+      const payload = insertDisputeSchema
+        .pick({ targetType: true, targetId: true, reason: true })
+        .extend({
+          targetType: z.enum(["session", "invoice", "report"]),
+          targetId: z.string().min(1),
+          reason: z.string().min(10),
+        })
+        .parse(req.body);
+
+      if (payload.targetType === "session") {
+        const session = await storage.getTutoringSession(payload.targetId);
+        if (!session) {
+          return res.status(404).json({ message: "Session not found" });
+        }
+        const isParent = activeUser.user.role === "parent"
+          ? (await storage.getParentChildren(activeUser.userId)).some((rel) => rel.childId === session.studentId)
+          : false;
+        const allowed = session.studentId === activeUser.userId ||
+          session.tutorId === activeUser.userId ||
+          isParent ||
+          ["admin", "manager"].includes(activeUser.user.role);
+        if (!allowed) {
+          return res.status(403).json({ message: "Access denied" });
+        }
+      }
+
+      if (payload.targetType === "invoice") {
+        const invoice = await storage.getInvoice(payload.targetId);
+        if (!invoice) {
+          return res.status(404).json({ message: "Invoice not found" });
+        }
+        const allowed = invoice.parentId === activeUser.userId || ["admin", "manager"].includes(activeUser.user.role);
+        if (!allowed) {
+          return res.status(403).json({ message: "Access denied" });
+        }
+      }
+
+      if (payload.targetType === "report") {
+        const report = await storage.getReportWithDetails(payload.targetId);
+        if (!report) {
+          return res.status(404).json({ message: "Report not found" });
+        }
+
+        const isOwner = report.createdById === activeUser.userId;
+        const isStudent = report.studentId === activeUser.userId;
+        let isParent = false;
+        if (activeUser.user.role === "parent" && report.studentId) {
+          const relationships = await storage.getParentChildren(activeUser.userId);
+          isParent = relationships.some((rel) => rel.childId === report.studentId);
+        }
+
+        const allowed = canViewReport({
+          role: activeUser.user.role,
+          reportType: report.type,
+          isOwner,
+          isStudent,
+          isParent,
+        });
+        if (!allowed) {
+          return res.status(403).json({ message: "Access denied" });
+        }
+      }
+
+      const dispute = await storage.createDispute({
+        targetType: payload.targetType,
+        targetId: payload.targetId,
+        reason: payload.reason,
+        createdById: activeUser.userId,
+      });
+
+      res.status(201).json(dispute);
+    } catch (error) {
+      console.error("Error creating dispute:", error);
+      res.status(500).json({ message: "Failed to create dispute" });
+    }
+  });
+
+  // Mark dispute under review
+  app.post('/api/disputes/:id/review', isAuthenticated, requireRole("admin", "manager"), async (req: Request, res: Response) => {
+    try {
+      const dbUser = getDbUser(req);
+      if (!dbUser) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+
+      const dispute = await storage.getDispute(req.params.id);
+      if (!dispute) {
+        return res.status(404).json({ message: "Dispute not found" });
+      }
+      if (dispute.status !== "open") {
+        return res.status(400).json({ message: "Only open disputes can be reviewed" });
+      }
+
+      const updated = await storage.updateDispute(dispute.id, {
+        status: "under_review",
+      });
+
+      await storage.createAuditLog({
+        performedById: dbUser.id,
+        targetUserId: dispute.createdById,
+        action: "review_dispute",
+        previousValue: dispute.status,
+        newValue: "under_review",
+        metadata: { disputeId: dispute.id, targetType: dispute.targetType },
+      });
+
+      res.json(updated);
+    } catch (error) {
+      console.error("Error reviewing dispute:", error);
+      res.status(500).json({ message: "Failed to review dispute" });
+    }
+  });
+
+  // Resolve dispute
+  app.post('/api/disputes/:id/resolve', isAuthenticated, requireRole("admin", "manager"), async (req: Request, res: Response) => {
+    try {
+      const dbUser = getDbUser(req);
+      if (!dbUser) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+
+      const dispute = await storage.getDispute(req.params.id);
+      if (!dispute) {
+        return res.status(404).json({ message: "Dispute not found" });
+      }
+      if (!canResolveDispute(dispute.status)) {
+        return res.status(400).json({ message: "Dispute cannot be resolved in its current status" });
+      }
+
+      const payload = z.object({ resolutionNotes: z.string().min(3) }).parse(req.body);
+
+      const updated = await storage.updateDispute(dispute.id, {
+        status: "resolved",
+        resolutionNotes: payload.resolutionNotes,
+        resolvedById: dbUser.id,
+        resolvedAt: new Date(),
+      });
+
+      await storage.createAuditLog({
+        performedById: dbUser.id,
+        targetUserId: dispute.createdById,
+        action: "resolve_dispute",
+        previousValue: dispute.status,
+        newValue: "resolved",
+        metadata: { disputeId: dispute.id, targetType: dispute.targetType },
+      });
+
+      res.json(updated);
+    } catch (error) {
+      console.error("Error resolving dispute:", error);
+      res.status(500).json({ message: "Failed to resolve dispute" });
+    }
+  });
+
+  // Reject dispute
+  app.post('/api/disputes/:id/reject', isAuthenticated, requireRole("admin", "manager"), async (req: Request, res: Response) => {
+    try {
+      const dbUser = getDbUser(req);
+      if (!dbUser) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+
+      const dispute = await storage.getDispute(req.params.id);
+      if (!dispute) {
+        return res.status(404).json({ message: "Dispute not found" });
+      }
+      if (!canResolveDispute(dispute.status)) {
+        return res.status(400).json({ message: "Dispute cannot be rejected in its current status" });
+      }
+
+      const payload = z.object({ resolutionNotes: z.string().min(3) }).parse(req.body);
+
+      const updated = await storage.updateDispute(dispute.id, {
+        status: "rejected",
+        resolutionNotes: payload.resolutionNotes,
+        resolvedById: dbUser.id,
+        resolvedAt: new Date(),
+      });
+
+      await storage.createAuditLog({
+        performedById: dbUser.id,
+        targetUserId: dispute.createdById,
+        action: "reject_dispute",
+        previousValue: dispute.status,
+        newValue: "rejected",
+        metadata: { disputeId: dispute.id, targetType: dispute.targetType },
+      });
+
+      res.json(updated);
+    } catch (error) {
+      console.error("Error rejecting dispute:", error);
+      res.status(500).json({ message: "Failed to reject dispute" });
+    }
+  });
+
+  // ==========================================
   // CHAT ROUTES (DIRECT MESSAGES)
   // ==========================================
 
   // Get users available for chat
   app.get('/api/chats/users', isAuthenticated, async (req: Request, res: Response) => {
     try {
-      const userId = req.user?.claims?.sub;
-      if (!userId) {
-        return res.status(401).json({ message: "Unauthorized" });
-      }
-      const users = await storage.getChatUsers(userId);
+      const messagingUser = await getActiveMessagingUser(req, res);
+      if (!messagingUser) return;
+
+      const users = await storage.getMessagingAvailableUsers(messagingUser.userId);
       res.json(users);
     } catch (error) {
       console.error("Error fetching chat users:", error);
@@ -2226,12 +2847,17 @@ export async function registerRoutes(
   // Get chat threads for current user
   app.get('/api/chats', isAuthenticated, async (req: Request, res: Response) => {
     try {
-      const userId = req.user?.claims?.sub;
-      if (!userId) {
-        return res.status(401).json({ message: "Unauthorized" });
-      }
-      const threads = await storage.getChatThreadsByUser(userId);
-      res.json(threads.map((thread) => ({
+      const messagingUser = await getActiveMessagingUser(req, res);
+      if (!messagingUser) return;
+
+      const retentionCutoff = getMessagingRetentionCutoff();
+      const allowedUserIds = new Set(await storage.getMessagingAllowedUserIds(messagingUser.userId));
+      const threads = await storage.getChatThreadsByUser(messagingUser.userId, { retentionCutoff });
+      const visibleThreads = threads.filter((thread) =>
+        thread.participants.every((participant) => allowedUserIds.has(participant.id)),
+      );
+
+      res.json(visibleThreads.map((thread) => ({
         id: thread.thread.id,
         updatedAt: thread.thread.updatedAt,
         participants: thread.participants,
@@ -2246,19 +2872,20 @@ export async function registerRoutes(
   // Create or fetch a direct message thread
   app.post('/api/chats', isAuthenticated, async (req: Request, res: Response) => {
     try {
-      const userId = req.user?.claims?.sub;
-      if (!userId) {
-        return res.status(401).json({ message: "Unauthorized" });
-      }
+      const messagingUser = await getActiveMessagingUser(req, res);
+      if (!messagingUser) return;
+
       const body = z.object({ participantId: z.string().min(1) }).parse(req.body);
-      if (body.participantId === userId) {
+      if (body.participantId === messagingUser.userId) {
         return res.status(400).json({ message: "Cannot start a chat with yourself" });
       }
-      const participant = await storage.getUser(body.participantId);
-      if (!participant || !participant.isActive || participant.status !== "active") {
-        return res.status(404).json({ message: "Chat participant not available" });
+
+      const allowedUserIds = await storage.getMessagingAllowedUserIds(messagingUser.userId);
+      if (!allowedUserIds.includes(body.participantId)) {
+        return res.status(403).json({ message: "Access denied" });
       }
-      const thread = await storage.createOrGetChatThread(userId, body.participantId);
+
+      const thread = await storage.createOrGetChatThread(messagingUser.userId, body.participantId);
       res.json(thread);
     } catch (error) {
       console.error("Error creating chat thread:", error);
@@ -2269,15 +2896,23 @@ export async function registerRoutes(
   // Get messages for a thread
   app.get('/api/chats/:threadId/messages', isAuthenticated, async (req: Request, res: Response) => {
     try {
-      const userId = req.user?.claims?.sub;
-      if (!userId) {
-        return res.status(401).json({ message: "Unauthorized" });
-      }
-      const isParticipant = await storage.isChatParticipant(req.params.threadId, userId);
+      const messagingUser = await getActiveMessagingUser(req, res);
+      if (!messagingUser) return;
+
+      const isParticipant = await storage.isChatParticipant(req.params.threadId, messagingUser.userId);
       if (!isParticipant) {
         return res.status(403).json({ message: "Access denied" });
       }
-      const messages = await storage.getChatMessages(req.params.threadId);
+
+      const participantIds = await storage.getChatThreadParticipantIds(req.params.threadId);
+      const allowedUserIds = new Set(await storage.getMessagingAllowedUserIds(messagingUser.userId));
+      const otherParticipantIds = participantIds.filter((id) => id !== messagingUser.userId);
+      if (otherParticipantIds.some((id) => !allowedUserIds.has(id))) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+
+      const retentionCutoff = getMessagingRetentionCutoff();
+      const messages = await storage.getChatMessages(req.params.threadId, { retentionCutoff });
       res.json(messages);
     } catch (error) {
       console.error("Error fetching chat messages:", error);
@@ -2288,18 +2923,25 @@ export async function registerRoutes(
   // Send a message in a thread
   app.post('/api/chats/:threadId/messages', isAuthenticated, async (req: Request, res: Response) => {
     try {
-      const userId = req.user?.claims?.sub;
-      if (!userId) {
-        return res.status(401).json({ message: "Unauthorized" });
-      }
-      const isParticipant = await storage.isChatParticipant(req.params.threadId, userId);
+      const messagingUser = await getActiveMessagingUser(req, res);
+      if (!messagingUser) return;
+
+      const isParticipant = await storage.isChatParticipant(req.params.threadId, messagingUser.userId);
       if (!isParticipant) {
         return res.status(403).json({ message: "Access denied" });
       }
-      const data = insertChatMessageSchema.pick({ content: true }).parse(req.body);
+
+      const participantIds = await storage.getChatThreadParticipantIds(req.params.threadId);
+      const allowedUserIds = new Set(await storage.getMessagingAllowedUserIds(messagingUser.userId));
+      const otherParticipantIds = participantIds.filter((id) => id !== messagingUser.userId);
+      if (otherParticipantIds.some((id) => !allowedUserIds.has(id))) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+
+      const data = z.object({ content: z.string().trim().min(1).max(2000) }).parse(req.body);
       const message = await storage.createChatMessage({
         threadId: req.params.threadId,
-        senderId: userId,
+        senderId: messagingUser.userId,
         content: data.content,
       });
       res.json(message);
@@ -5029,6 +5671,29 @@ export async function registerRoutes(
             { method: 'POST', path: '/api/tutoring-sessions/:id/end', access: 'Tutor', desc: 'End a session' },
             { method: 'PATCH', path: '/api/tutoring-sessions/:id/postpone', access: 'Authenticated', desc: 'Postpone session' },
             { method: 'PATCH', path: '/api/tutoring-sessions/:id/cancel', access: 'Authenticated', desc: 'Cancel session' },
+          ]
+        },
+        {
+          title: 'Reports',
+          endpoints: [
+            { method: 'GET', path: '/api/reports', access: 'Authenticated', desc: 'List reports (filtered by role and query)' },
+            { method: 'GET', path: '/api/reports/:id', access: 'Authenticated', desc: 'Get report details' },
+            { method: 'POST', path: '/api/reports', access: 'Tutor', desc: 'Create report (session or monthly)' },
+            { method: 'PATCH', path: '/api/reports/:id', access: 'Tutor', desc: 'Update report draft' },
+            { method: 'POST', path: '/api/reports/:id/submit', access: 'Tutor', desc: 'Submit report for approval' },
+            { method: 'POST', path: '/api/reports/:id/approve', access: 'Admin, Manager', desc: 'Approve report' },
+            { method: 'POST', path: '/api/reports/:id/reject', access: 'Admin, Manager', desc: 'Reject report' },
+          ]
+        },
+        {
+          title: 'Disputes',
+          endpoints: [
+            { method: 'GET', path: '/api/disputes', access: 'Authenticated', desc: 'List disputes (role-filtered)' },
+            { method: 'GET', path: '/api/disputes/:id', access: 'Authenticated', desc: 'Get dispute details' },
+            { method: 'POST', path: '/api/disputes', access: 'Authenticated', desc: 'Create dispute for session, invoice, or report' },
+            { method: 'POST', path: '/api/disputes/:id/review', access: 'Admin, Manager', desc: 'Mark dispute under review' },
+            { method: 'POST', path: '/api/disputes/:id/resolve', access: 'Admin, Manager', desc: 'Resolve dispute' },
+            { method: 'POST', path: '/api/disputes/:id/reject', access: 'Admin, Manager', desc: 'Reject dispute' },
           ]
         },
         {
