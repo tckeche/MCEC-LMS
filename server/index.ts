@@ -3,6 +3,7 @@ import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
 import { storage } from "./storage";
+import { MESSAGING_RETENTION_MONTHS, getMessagingRetentionCutoff } from "@shared/messagingPolicy";
 
 const app = express();
 const httpServer = createServer(app);
@@ -64,11 +65,11 @@ app.use((req, res, next) => {
   await registerRoutes(httpServer, app);
 
   const runChatRetentionCleanup = async () => {
-    const cutoff = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000);
+    const cutoff = getMessagingRetentionCutoff();
     try {
       const deletedCount = await storage.deleteChatMessagesBefore(cutoff);
       if (deletedCount > 0) {
-        log(`deleted ${deletedCount} chat messages older than 60 days`, "chat-retention");
+        log(`deleted ${deletedCount} chat messages older than ${MESSAGING_RETENTION_MONTHS} months`, "chat-retention");
       }
     } catch (error) {
       log(`failed to delete old chat messages: ${(error as Error).message}`, "chat-retention");

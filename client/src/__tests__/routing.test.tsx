@@ -31,7 +31,7 @@ vi.mock("@/components/view-as-dropdown", () => ({
 
 describe("App routing", () => {
   it("renders admin settings without hitting NotFound", () => {
-    const routerHook = memoryLocation({ path: "/admin/settings" });
+    const { hook: routerHook } = memoryLocation({ path: "/admin/settings" });
     render(
       <Router hook={routerHook}>
         <AppRouter />

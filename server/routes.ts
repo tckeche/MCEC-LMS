@@ -25,13 +25,13 @@ import {
   insertPayoutSchema,
   insertPayoutLineSchema,
   insertPayoutFlagSchema,
-  insertChatMessageSchema,
   type UserRole,
   type ProposalStatus,
   type TutoringSessionStatus,
   type InvoiceStatus,
   type PayoutStatus,
 } from "@shared/schema";
+import { getMessagingRetentionCutoff } from "@shared/messagingPolicy";
 import { z } from "zod";
 import PDFDocument from "pdfkit";
 
@@ -101,6 +101,22 @@ async function refundWalletWithAudit(
 
 function getDbUser(req: Request) {
   return (req as any).dbUser;
+}
+
+async function getActiveMessagingUser(req: Request, res: Response) {
+  const userId = req.user?.claims?.sub;
+  if (!userId) {
+    res.status(401).json({ message: "Unauthorized" });
+    return null;
+  }
+
+  const user = await storage.getUser(userId);
+  if (!user || !user.isActive || user.status !== "active") {
+    res.status(403).json({ message: "Access denied" });
+    return null;
+  }
+
+  return { userId, user };
 }
 
 
@@ -2211,11 +2227,10 @@ export async function registerRoutes(
   // Get users available for chat
   app.get('/api/chats/users', isAuthenticated, async (req: Request, res: Response) => {
     try {
-      const userId = req.user?.claims?.sub;
-      if (!userId) {
-        return res.status(401).json({ message: "Unauthorized" });
-      }
-      const users = await storage.getChatUsers(userId);
+      const messagingUser = await getActiveMessagingUser(req, res);
+      if (!messagingUser) return;
+
+      const users = await storage.getMessagingAvailableUsers(messagingUser.userId);
       res.json(users);
     } catch (error) {
       console.error("Error fetching chat users:", error);
@@ -2226,12 +2241,17 @@ export async function registerRoutes(
   // Get chat threads for current user
   app.get('/api/chats', isAuthenticated, async (req: Request, res: Response) => {
     try {
-      const userId = req.user?.claims?.sub;
-      if (!userId) {
-        return res.status(401).json({ message: "Unauthorized" });
-      }
-      const threads = await storage.getChatThreadsByUser(userId);
-      res.json(threads.map((thread) => ({
+      const messagingUser = await getActiveMessagingUser(req, res);
+      if (!messagingUser) return;
+
+      const retentionCutoff = getMessagingRetentionCutoff();
+      const allowedUserIds = new Set(await storage.getMessagingAllowedUserIds(messagingUser.userId));
+      const threads = await storage.getChatThreadsByUser(messagingUser.userId, { retentionCutoff });
+      const visibleThreads = threads.filter((thread) =>
+        thread.participants.every((participant) => allowedUserIds.has(participant.id)),
+      );
+
+      res.json(visibleThreads.map((thread) => ({
         id: thread.thread.id,
         updatedAt: thread.thread.updatedAt,
         participants: thread.participants,
@@ -2246,19 +2266,20 @@ export async function registerRoutes(
   // Create or fetch a direct message thread
   app.post('/api/chats', isAuthenticated, async (req: Request, res: Response) => {
     try {
-      const userId = req.user?.claims?.sub;
-      if (!userId) {
-        return res.status(401).json({ message: "Unauthorized" });
-      }
+      const messagingUser = await getActiveMessagingUser(req, res);
+      if (!messagingUser) return;
+
       const body = z.object({ participantId: z.string().min(1) }).parse(req.body);
-      if (body.participantId === userId) {
+      if (body.participantId === messagingUser.userId) {
         return res.status(400).json({ message: "Cannot start a chat with yourself" });
       }
-      const participant = await storage.getUser(body.participantId);
-      if (!participant || !participant.isActive || participant.status !== "active") {
-        return res.status(404).json({ message: "Chat participant not available" });
+
+      const allowedUserIds = await storage.getMessagingAllowedUserIds(messagingUser.userId);
+      if (!allowedUserIds.includes(body.participantId)) {
+        return res.status(403).json({ message: "Access denied" });
       }
-      const thread = await storage.createOrGetChatThread(userId, body.participantId);
+
+      const thread = await storage.createOrGetChatThread(messagingUser.userId, body.participantId);
       res.json(thread);
     } catch (error) {
       console.error("Error creating chat thread:", error);
@@ -2269,15 +2290,23 @@ export async function registerRoutes(
   // Get messages for a thread
   app.get('/api/chats/:threadId/messages', isAuthenticated, async (req: Request, res: Response) => {
     try {
-      const userId = req.user?.claims?.sub;
-      if (!userId) {
-        return res.status(401).json({ message: "Unauthorized" });
-      }
-      const isParticipant = await storage.isChatParticipant(req.params.threadId, userId);
+      const messagingUser = await getActiveMessagingUser(req, res);
+      if (!messagingUser) return;
+
+      const isParticipant = await storage.isChatParticipant(req.params.threadId, messagingUser.userId);
       if (!isParticipant) {
         return res.status(403).json({ message: "Access denied" });
       }
-      const messages = await storage.getChatMessages(req.params.threadId);
+
+      const participantIds = await storage.getChatThreadParticipantIds(req.params.threadId);
+      const allowedUserIds = new Set(await storage.getMessagingAllowedUserIds(messagingUser.userId));
+      const otherParticipantIds = participantIds.filter((id) => id !== messagingUser.userId);
+      if (otherParticipantIds.some((id) => !allowedUserIds.has(id))) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+
+      const retentionCutoff = getMessagingRetentionCutoff();
+      const messages = await storage.getChatMessages(req.params.threadId, { retentionCutoff });
       res.json(messages);
     } catch (error) {
       console.error("Error fetching chat messages:", error);
@@ -2288,18 +2317,25 @@ export async function registerRoutes(
   // Send a message in a thread
   app.post('/api/chats/:threadId/messages', isAuthenticated, async (req: Request, res: Response) => {
     try {
-      const userId = req.user?.claims?.sub;
-      if (!userId) {
-        return res.status(401).json({ message: "Unauthorized" });
-      }
-      const isParticipant = await storage.isChatParticipant(req.params.threadId, userId);
+      const messagingUser = await getActiveMessagingUser(req, res);
+      if (!messagingUser) return;
+
+      const isParticipant = await storage.isChatParticipant(req.params.threadId, messagingUser.userId);
       if (!isParticipant) {
         return res.status(403).json({ message: "Access denied" });
       }
-      const data = insertChatMessageSchema.pick({ content: true }).parse(req.body);
+
+      const participantIds = await storage.getChatThreadParticipantIds(req.params.threadId);
+      const allowedUserIds = new Set(await storage.getMessagingAllowedUserIds(messagingUser.userId));
+      const otherParticipantIds = participantIds.filter((id) => id !== messagingUser.userId);
+      if (otherParticipantIds.some((id) => !allowedUserIds.has(id))) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+
+      const data = z.object({ content: z.string().trim().min(1).max(2000) }).parse(req.body);
       const message = await storage.createChatMessage({
         threadId: req.params.threadId,
-        senderId: userId,
+        senderId: messagingUser.userId,
         content: data.content,
       });
       res.json(message);
