@@ -17,6 +17,7 @@ import {
   LogOut,
   Shield,
   MessageSquare,
+  AlertTriangle,
 } from "lucide-react";
 import {
   Sidebar,
@@ -53,6 +54,18 @@ const navItems: NavItem[] = [
     title: "Chat",
     url: "/chat",
     icon: MessageSquare,
+    roles: ["student", "parent", "tutor", "manager", "admin"],
+  },
+  {
+    title: "Reports",
+    url: "/reports",
+    icon: FileText,
+    roles: ["student", "parent", "tutor", "manager", "admin"],
+  },
+  {
+    title: "Disputes",
+    url: "/disputes",
+    icon: AlertTriangle,
     roles: ["student", "parent", "tutor", "manager", "admin"],
   },
   {

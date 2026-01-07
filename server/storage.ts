@@ -12,6 +12,8 @@ import {
   chatThreads,
   chatParticipants,
   chatMessages,
+  reports,
+  disputes,
   tutorAvailability,
   sessionProposals,
   tutoringSessions,
@@ -47,6 +49,15 @@ import {
   type ChatMessage,
   type InsertChatMessage,
   type ChatUserSummary,
+  type Report,
+  type InsertReport,
+  type ReportWithDetails,
+  type Dispute,
+  type InsertDispute,
+  type DisputeStatus,
+  type DisputeTargetType,
+  type ReportStatus,
+  type ReportType,
   type CourseWithTutor,
   type CourseWithEnrollmentCount,
   type EnrollmentWithDetails,
@@ -101,6 +112,7 @@ import {
   type InsertAuditLog,
   type AuditLogWithDetails,
 } from "@shared/schema";
+import { resolveMessagingRecipientIds } from "@shared/messagingPolicy";
 import { db } from "./db";
 import { eq, and, desc, count, sql, inArray, or, gte, lte, ne, lt, asc } from "drizzle-orm";
 
@@ -204,13 +216,40 @@ export interface IStorage {
   deleteNotification(id: string, userId: string): Promise<boolean>;
   
   // Chat operations (Direct Messages)
-  getChatUsers(userId: string): Promise<ChatUserSummary[]>;
-  getChatThreadsByUser(userId: string): Promise<Array<{ thread: ChatThread; participants: ChatUserSummary[]; lastMessage?: ChatMessage }>>;
-  getChatMessages(threadId: string): Promise<ChatMessage[]>;
+  getMessagingAvailableUsers(userId: string): Promise<ChatUserSummary[]>;
+  getMessagingAllowedUserIds(userId: string): Promise<string[]>;
+  getChatThreadsByUser(
+    userId: string,
+    options?: { retentionCutoff?: Date },
+  ): Promise<Array<{ thread: ChatThread; participants: ChatUserSummary[]; lastMessage?: ChatMessage }>>;
+  getChatMessages(threadId: string, options?: { retentionCutoff?: Date }): Promise<ChatMessage[]>;
+  getChatThreadParticipantIds(threadId: string): Promise<string[]>;
   createOrGetChatThread(userId: string, otherUserId: string): Promise<ChatThread>;
   isChatParticipant(threadId: string, userId: string): Promise<boolean>;
   createChatMessage(message: InsertChatMessage): Promise<ChatMessage>;
   deleteChatMessagesBefore(cutoff: Date): Promise<number>;
+
+  // Reporting & dispute operations
+  createReport(report: InsertReport): Promise<Report>;
+  getReport(id: string): Promise<Report | undefined>;
+  getReportWithDetails(id: string): Promise<ReportWithDetails | undefined>;
+  getReportsWithDetails(filters?: {
+    type?: ReportType;
+    status?: ReportStatus;
+    tutorId?: string;
+    studentId?: string;
+    studentIds?: string[];
+    month?: string;
+  }): Promise<ReportWithDetails[]>;
+  updateReport(id: string, updates: Partial<Report>): Promise<Report | undefined>;
+  createDispute(dispute: InsertDispute): Promise<Dispute>;
+  getDispute(id: string): Promise<Dispute | undefined>;
+  getDisputes(filters?: {
+    status?: DisputeStatus;
+    targetType?: DisputeTargetType;
+    createdById?: string;
+  }): Promise<Dispute[]>;
+  updateDispute(id: string, updates: Partial<Dispute>): Promise<Dispute | undefined>;
 
   // Helper to get enrolled students for a course (for notifications)
   getEnrolledStudentIds(courseId: string): Promise<string[]>;
@@ -1207,7 +1246,120 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Chat operations (Direct Messages)
-  async getChatUsers(userId: string): Promise<ChatUserSummary[]> {
+  private async getActiveUserIdsByRole(roles: UserRole[]): Promise<string[]> {
+    if (roles.length === 0) return [];
+    const result = await db
+      .select({ id: users.id })
+      .from(users)
+      .where(and(
+        inArray(users.role, roles),
+        eq(users.isActive, true),
+        eq(users.status, "active")
+      ));
+    return result.map((row) => row.id);
+  }
+
+  private async getActiveUserIdsByIds(userIds: string[]): Promise<string[]> {
+    if (userIds.length === 0) return [];
+    const result = await db
+      .select({ id: users.id })
+      .from(users)
+      .where(and(
+        inArray(users.id, userIds),
+        eq(users.isActive, true),
+        eq(users.status, "active")
+      ));
+    return result.map((row) => row.id);
+  }
+
+  async getMessagingAllowedUserIds(userId: string): Promise<string[]> {
+    const user = await this.getUser(userId);
+    if (!user) return [];
+
+    const staffIds = await this.getActiveUserIdsByRole(["admin", "manager"]);
+    if (user.isSuperAdmin || user.role === "admin" || user.role === "manager") {
+      const allActiveUsers = await db
+        .select({ id: users.id })
+        .from(users)
+        .where(and(eq(users.isActive, true), eq(users.status, "active"), ne(users.id, userId)));
+      return allActiveUsers.map((row) => row.id);
+    }
+
+    let tutorIds: string[] = [];
+    let studentIds: string[] = [];
+    let parentIds: string[] = [];
+    let childIds: string[] = [];
+
+    if (user.role === "tutor") {
+      const studentRows = await db
+        .select({ studentId: enrollments.studentId })
+        .from(enrollments)
+        .innerJoin(courses, eq(enrollments.courseId, courses.id))
+        .where(and(
+          eq(courses.tutorId, userId),
+          eq(courses.isActive, true),
+          inArray(enrollments.status, ["active", "pending", "completed"])
+        ));
+      studentIds = Array.from(new Set(studentRows.map((row) => row.studentId)));
+
+      if (studentIds.length > 0) {
+        const parentRows = await db
+          .select({ parentId: parentChildren.parentId })
+          .from(parentChildren)
+          .where(inArray(parentChildren.childId, studentIds));
+        parentIds = Array.from(new Set(parentRows.map((row) => row.parentId)));
+      }
+    }
+
+    if (user.role === "student") {
+      const tutorRows = await db
+        .select({ tutorId: courses.tutorId })
+        .from(enrollments)
+        .innerJoin(courses, eq(enrollments.courseId, courses.id))
+        .where(and(
+          eq(enrollments.studentId, userId),
+          inArray(enrollments.status, ["active", "pending", "completed"]),
+          eq(courses.isActive, true)
+        ));
+      tutorIds = Array.from(new Set(tutorRows.map((row) => row.tutorId)));
+    }
+
+    if (user.role === "parent") {
+      const childRows = await db
+        .select({ childId: parentChildren.childId })
+        .from(parentChildren)
+        .where(eq(parentChildren.parentId, userId));
+      childIds = Array.from(new Set(childRows.map((row) => row.childId)));
+
+      if (childIds.length > 0) {
+        const tutorRows = await db
+          .select({ tutorId: courses.tutorId })
+          .from(enrollments)
+          .innerJoin(courses, eq(enrollments.courseId, courses.id))
+          .where(and(
+            inArray(enrollments.studentId, childIds),
+            inArray(enrollments.status, ["active", "pending", "completed"]),
+            eq(courses.isActive, true)
+          ));
+        tutorIds = Array.from(new Set(tutorRows.map((row) => row.tutorId)));
+      }
+    }
+
+    const allowedIds = resolveMessagingRecipientIds(user.role, {
+      staffIds,
+      tutorIds,
+      studentIds,
+      parentIds,
+      childIds,
+    });
+
+    const activeAllowedIds = await this.getActiveUserIdsByIds(allowedIds);
+    return activeAllowedIds.filter((id) => id !== userId);
+  }
+
+  async getMessagingAvailableUsers(userId: string): Promise<ChatUserSummary[]> {
+    const allowedIds = await this.getMessagingAllowedUserIds(userId);
+    if (allowedIds.length === 0) return [];
     return db
       .select({
         id: users.id,
@@ -1218,16 +1370,13 @@ export class DatabaseStorage implements IStorage {
         profileImageUrl: users.profileImageUrl,
       })
       .from(users)
-      .where(and(
-        ne(users.id, userId),
-        eq(users.isActive, true),
-        eq(users.status, "active")
-      ))
+      .where(inArray(users.id, allowedIds))
       .orderBy(users.firstName, users.lastName);
   }
 
   async getChatThreadsByUser(
     userId: string,
+    options?: { retentionCutoff?: Date },
   ): Promise<Array<{ thread: ChatThread; participants: ChatUserSummary[]; lastMessage?: ChatMessage }>> {
     const participantThreads = await db
       .select({ threadId: chatParticipants.threadId })
@@ -1259,10 +1408,15 @@ export class DatabaseStorage implements IStorage {
       .innerJoin(users, eq(chatParticipants.userId, users.id))
       .where(inArray(chatParticipants.threadId, threadIds));
 
+    const messageFilters = [inArray(chatMessages.threadId, threadIds)];
+    if (options?.retentionCutoff) {
+      messageFilters.push(gte(chatMessages.createdAt, options.retentionCutoff));
+    }
+
     const messages = await db
       .select()
       .from(chatMessages)
-      .where(inArray(chatMessages.threadId, threadIds))
+      .where(and(...messageFilters))
       .orderBy(desc(chatMessages.createdAt));
 
     const lastMessageByThread = new Map<string, ChatMessage>();
@@ -1288,12 +1442,25 @@ export class DatabaseStorage implements IStorage {
     }));
   }
 
-  async getChatMessages(threadId: string): Promise<ChatMessage[]> {
+  async getChatMessages(threadId: string, options?: { retentionCutoff?: Date }): Promise<ChatMessage[]> {
+    const filters = [eq(chatMessages.threadId, threadId)];
+    if (options?.retentionCutoff) {
+      filters.push(gte(chatMessages.createdAt, options.retentionCutoff));
+    }
+
     return db
       .select()
       .from(chatMessages)
-      .where(eq(chatMessages.threadId, threadId))
+      .where(and(...filters))
       .orderBy(asc(chatMessages.createdAt));
+  }
+
+  async getChatThreadParticipantIds(threadId: string): Promise<string[]> {
+    const participants = await db
+      .select({ userId: chatParticipants.userId })
+      .from(chatParticipants)
+      .where(eq(chatParticipants.threadId, threadId));
+    return participants.map((row) => row.userId);
   }
 
   async createOrGetChatThread(userId: string, otherUserId: string): Promise<ChatThread> {
@@ -1360,6 +1527,121 @@ export class DatabaseStorage implements IStorage {
   async deleteChatMessagesBefore(cutoff: Date): Promise<number> {
     const result = await db.delete(chatMessages).where(lt(chatMessages.createdAt, cutoff)).returning();
     return result.length;
+  }
+
+  // Reporting & dispute operations
+  async createReport(report: InsertReport): Promise<Report> {
+    const [created] = await db.insert(reports).values(report).returning();
+    return created;
+  }
+
+  async getReport(id: string): Promise<Report | undefined> {
+    const [report] = await db.select().from(reports).where(eq(reports.id, id));
+    return report;
+  }
+
+  async getReportWithDetails(id: string): Promise<ReportWithDetails | undefined> {
+    const [report] = await db.select().from(reports).where(eq(reports.id, id));
+    if (!report) return undefined;
+
+    const [createdBy] = await db.select().from(users).where(eq(users.id, report.createdById));
+    const [student] = report.studentId
+      ? await db.select().from(users).where(eq(users.id, report.studentId))
+      : [null];
+    const [approvedBy] = report.approvedById
+      ? await db.select().from(users).where(eq(users.id, report.approvedById))
+      : [null];
+    const [session] = report.sessionId
+      ? await db.select().from(tutoringSessions).where(eq(tutoringSessions.id, report.sessionId))
+      : [null];
+    const [course] = report.courseId
+      ? await db.select().from(courses).where(eq(courses.id, report.courseId))
+      : [null];
+
+    return {
+      ...report,
+      createdBy,
+      student,
+      approvedBy,
+      session,
+      course,
+    };
+  }
+
+  async getReportsWithDetails(filters?: {
+    type?: ReportType;
+    status?: ReportStatus;
+    tutorId?: string;
+    studentId?: string;
+    studentIds?: string[];
+    courseId?: string;
+    month?: string;
+  }): Promise<ReportWithDetails[]> {
+    const conditions = [];
+    if (filters?.type) conditions.push(eq(reports.type, filters.type));
+    if (filters?.status) conditions.push(eq(reports.status, filters.status));
+    if (filters?.tutorId) conditions.push(eq(reports.createdById, filters.tutorId));
+    if (filters?.studentId) conditions.push(eq(reports.studentId, filters.studentId));
+    if (filters?.studentIds?.length) conditions.push(inArray(reports.studentId, filters.studentIds));
+    if (filters?.courseId) conditions.push(eq(reports.courseId, filters.courseId));
+    if (filters?.month) conditions.push(eq(reports.month, filters.month));
+
+    const query = conditions.length > 0
+      ? db.select().from(reports).where(and(...conditions)).orderBy(desc(reports.createdAt))
+      : db.select().from(reports).orderBy(desc(reports.createdAt));
+
+    const reportRows = await query;
+    const results: ReportWithDetails[] = [];
+    for (const report of reportRows) {
+      const details = await this.getReportWithDetails(report.id);
+      if (details) results.push(details);
+    }
+    return results;
+  }
+
+  async updateReport(id: string, updates: Partial<Report>): Promise<Report | undefined> {
+    const [updated] = await db
+      .update(reports)
+      .set({ ...updates, updatedAt: new Date() })
+      .where(eq(reports.id, id))
+      .returning();
+    return updated;
+  }
+
+  async createDispute(dispute: InsertDispute): Promise<Dispute> {
+    const [created] = await db.insert(disputes).values(dispute).returning();
+    return created;
+  }
+
+  async getDispute(id: string): Promise<Dispute | undefined> {
+    const [dispute] = await db.select().from(disputes).where(eq(disputes.id, id));
+    return dispute;
+  }
+
+  async getDisputes(filters?: {
+    status?: DisputeStatus;
+    targetType?: DisputeTargetType;
+    createdById?: string;
+  }): Promise<Dispute[]> {
+    const conditions = [];
+    if (filters?.status) conditions.push(eq(disputes.status, filters.status));
+    if (filters?.targetType) conditions.push(eq(disputes.targetType, filters.targetType));
+    if (filters?.createdById) conditions.push(eq(disputes.createdById, filters.createdById));
+
+    const query = conditions.length > 0
+      ? db.select().from(disputes).where(and(...conditions)).orderBy(desc(disputes.createdAt))
+      : db.select().from(disputes).orderBy(desc(disputes.createdAt));
+
+    return query;
+  }
+
+  async updateDispute(id: string, updates: Partial<Dispute>): Promise<Dispute | undefined> {
+    const [updated] = await db
+      .update(disputes)
+      .set({ ...updates, updatedAt: new Date() })
+      .where(eq(disputes.id, id))
+      .returning();
+    return updated;
   }
 
   async getEnrolledStudentIds(courseId: string): Promise<string[]> {
