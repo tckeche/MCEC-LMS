@@ -101,6 +101,7 @@ import {
   type InsertAuditLog,
   type AuditLogWithDetails,
 } from "@shared/schema";
+import { resolveMessagingRecipientIds } from "@shared/messagingPolicy";
 import { db } from "./db";
 import { eq, and, desc, count, sql, inArray, or, gte, lte, ne, lt, asc } from "drizzle-orm";
 
@@ -204,9 +205,14 @@ export interface IStorage {
   deleteNotification(id: string, userId: string): Promise<boolean>;
   
   // Chat operations (Direct Messages)
-  getChatUsers(userId: string): Promise<ChatUserSummary[]>;
-  getChatThreadsByUser(userId: string): Promise<Array<{ thread: ChatThread; participants: ChatUserSummary[]; lastMessage?: ChatMessage }>>;
-  getChatMessages(threadId: string): Promise<ChatMessage[]>;
+  getMessagingAvailableUsers(userId: string): Promise<ChatUserSummary[]>;
+  getMessagingAllowedUserIds(userId: string): Promise<string[]>;
+  getChatThreadsByUser(
+    userId: string,
+    options?: { retentionCutoff?: Date },
+  ): Promise<Array<{ thread: ChatThread; participants: ChatUserSummary[]; lastMessage?: ChatMessage }>>;
+  getChatMessages(threadId: string, options?: { retentionCutoff?: Date }): Promise<ChatMessage[]>;
+  getChatThreadParticipantIds(threadId: string): Promise<string[]>;
   createOrGetChatThread(userId: string, otherUserId: string): Promise<ChatThread>;
   isChatParticipant(threadId: string, userId: string): Promise<boolean>;
   createChatMessage(message: InsertChatMessage): Promise<ChatMessage>;
@@ -1207,7 +1213,120 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Chat operations (Direct Messages)
-  async getChatUsers(userId: string): Promise<ChatUserSummary[]> {
+  private async getActiveUserIdsByRole(roles: UserRole[]): Promise<string[]> {
+    if (roles.length === 0) return [];
+    const result = await db
+      .select({ id: users.id })
+      .from(users)
+      .where(and(
+        inArray(users.role, roles),
+        eq(users.isActive, true),
+        eq(users.status, "active")
+      ));
+    return result.map((row) => row.id);
+  }
+
+  private async getActiveUserIdsByIds(userIds: string[]): Promise<string[]> {
+    if (userIds.length === 0) return [];
+    const result = await db
+      .select({ id: users.id })
+      .from(users)
+      .where(and(
+        inArray(users.id, userIds),
+        eq(users.isActive, true),
+        eq(users.status, "active")
+      ));
+    return result.map((row) => row.id);
+  }
+
+  async getMessagingAllowedUserIds(userId: string): Promise<string[]> {
+    const user = await this.getUser(userId);
+    if (!user) return [];
+
+    const staffIds = await this.getActiveUserIdsByRole(["admin", "manager"]);
+    if (user.isSuperAdmin || user.role === "admin" || user.role === "manager") {
+      const allActiveUsers = await db
+        .select({ id: users.id })
+        .from(users)
+        .where(and(eq(users.isActive, true), eq(users.status, "active"), ne(users.id, userId)));
+      return allActiveUsers.map((row) => row.id);
+    }
+
+    let tutorIds: string[] = [];
+    let studentIds: string[] = [];
+    let parentIds: string[] = [];
+    let childIds: string[] = [];
+
+    if (user.role === "tutor") {
+      const studentRows = await db
+        .select({ studentId: enrollments.studentId })
+        .from(enrollments)
+        .innerJoin(courses, eq(enrollments.courseId, courses.id))
+        .where(and(
+          eq(courses.tutorId, userId),
+          eq(courses.isActive, true),
+          eq(enrollments.status, "active")
+        ));
+      studentIds = Array.from(new Set(studentRows.map((row) => row.studentId)));
+
+      if (studentIds.length > 0) {
+        const parentRows = await db
+          .select({ parentId: parentChildren.parentId })
+          .from(parentChildren)
+          .where(inArray(parentChildren.childId, studentIds));
+        parentIds = Array.from(new Set(parentRows.map((row) => row.parentId)));
+      }
+    }
+
+    if (user.role === "student") {
+      const tutorRows = await db
+        .select({ tutorId: courses.tutorId })
+        .from(enrollments)
+        .innerJoin(courses, eq(enrollments.courseId, courses.id))
+        .where(and(
+          eq(enrollments.studentId, userId),
+          eq(enrollments.status, "active"),
+          eq(courses.isActive, true)
+        ));
+      tutorIds = Array.from(new Set(tutorRows.map((row) => row.tutorId)));
+    }
+
+    if (user.role === "parent") {
+      const childRows = await db
+        .select({ childId: parentChildren.childId })
+        .from(parentChildren)
+        .where(eq(parentChildren.parentId, userId));
+      childIds = Array.from(new Set(childRows.map((row) => row.childId)));
+
+      if (childIds.length > 0) {
+        const tutorRows = await db
+          .select({ tutorId: courses.tutorId })
+          .from(enrollments)
+          .innerJoin(courses, eq(enrollments.courseId, courses.id))
+          .where(and(
+            inArray(enrollments.studentId, childIds),
+            eq(enrollments.status, "active"),
+            eq(courses.isActive, true)
+          ));
+        tutorIds = Array.from(new Set(tutorRows.map((row) => row.tutorId)));
+      }
+    }
+
+    const allowedIds = resolveMessagingRecipientIds(user.role, {
+      staffIds,
+      tutorIds,
+      studentIds,
+      parentIds,
+      childIds,
+    });
+
+    const activeAllowedIds = await this.getActiveUserIdsByIds(allowedIds);
+    return activeAllowedIds.filter((id) => id !== userId);
+  }
+
+  async getMessagingAvailableUsers(userId: string): Promise<ChatUserSummary[]> {
+    const allowedIds = await this.getMessagingAllowedUserIds(userId);
+    if (allowedIds.length === 0) return [];
     return db
       .select({
         id: users.id,
@@ -1218,16 +1337,13 @@ export class DatabaseStorage implements IStorage {
         profileImageUrl: users.profileImageUrl,
       })
       .from(users)
-      .where(and(
-        ne(users.id, userId),
-        eq(users.isActive, true),
-        eq(users.status, "active")
-      ))
+      .where(inArray(users.id, allowedIds))
       .orderBy(users.firstName, users.lastName);
   }
 
   async getChatThreadsByUser(
     userId: string,
+    options?: { retentionCutoff?: Date },
   ): Promise<Array<{ thread: ChatThread; participants: ChatUserSummary[]; lastMessage?: ChatMessage }>> {
     const participantThreads = await db
       .select({ threadId: chatParticipants.threadId })
@@ -1259,10 +1375,15 @@ export class DatabaseStorage implements IStorage {
       .innerJoin(users, eq(chatParticipants.userId, users.id))
       .where(inArray(chatParticipants.threadId, threadIds));
 
+    const messageFilters = [inArray(chatMessages.threadId, threadIds)];
+    if (options?.retentionCutoff) {
+      messageFilters.push(gte(chatMessages.createdAt, options.retentionCutoff));
+    }
+
     const messages = await db
       .select()
       .from(chatMessages)
-      .where(inArray(chatMessages.threadId, threadIds))
+      .where(and(...messageFilters))
       .orderBy(desc(chatMessages.createdAt));
 
     const lastMessageByThread = new Map<string, ChatMessage>();
@@ -1288,12 +1409,25 @@ export class DatabaseStorage implements IStorage {
     }));
   }
 
-  async getChatMessages(threadId: string): Promise<ChatMessage[]> {
+  async getChatMessages(threadId: string, options?: { retentionCutoff?: Date }): Promise<ChatMessage[]> {
+    const filters = [eq(chatMessages.threadId, threadId)];
+    if (options?.retentionCutoff) {
+      filters.push(gte(chatMessages.createdAt, options.retentionCutoff));
+    }
+
     return db
       .select()
       .from(chatMessages)
-      .where(eq(chatMessages.threadId, threadId))
+      .where(and(...filters))
       .orderBy(asc(chatMessages.createdAt));
+  }
+
+  async getChatThreadParticipantIds(threadId: string): Promise<string[]> {
+    const participants = await db
+      .select({ userId: chatParticipants.userId })
+      .from(chatParticipants)
+      .where(eq(chatParticipants.threadId, threadId));
+    return participants.map((row) => row.userId);
   }
 
   async createOrGetChatThread(userId: string, otherUserId: string): Promise<ChatThread> {

@@ -128,17 +128,34 @@ export default function ChatPage() {
     [chatUsers, user?.id],
   );
 
+  const inboxGuidance = useMemo(() => {
+    switch (user?.role) {
+      case "admin":
+      case "manager":
+        return "Reach out to any active user across the platform.";
+      case "tutor":
+        return "Message your active students, their parents, or administrators.";
+      case "parent":
+        return "Message your children, their tutors, or administrators.";
+      case "student":
+        return "Message your tutors or administrators for support.";
+      default:
+        return "Start a conversation with your approved contacts.";
+    }
+  }, [user?.role]);
+
   return (
     <div className="min-h-full bg-background p-6">
       <div className="flex flex-col gap-6 lg:flex-row">
         <div className="w-full lg:w-80">
           <Card>
             <CardHeader>
-              <CardTitle>Chat</CardTitle>
+              <CardTitle>Inbox</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
+              <p className="text-sm text-muted-foreground">{inboxGuidance}</p>
               <div className="space-y-2">
-                <Label htmlFor="chat-user-select">Start a new chat</Label>
+                <Label htmlFor="chat-user-select">Start a new message</Label>
                 {chatUsersLoading ? (
                   <Skeleton className="h-10 w-full" />
                 ) : (
@@ -165,7 +182,7 @@ export default function ChatPage() {
                   disabled={!selectedUserId || createThreadMutation.isPending}
                   onClick={() => createThreadMutation.mutate()}
                 >
-                  Start Chat
+                  Start Message
                 </Button>
               </div>
               <div className="space-y-2">
@@ -218,6 +235,9 @@ export default function ChatPage() {
                   </div>
                 )}
               </div>
+              <p className="text-xs text-muted-foreground">
+                Messages are retained for up to 12 months.
+              </p>
             </CardContent>
           </Card>
         </div>
