@@ -1,0 +1,68 @@
+# Role: Senior Full-Stack Architect & QA Lead
+# Mission: Rescue, Repair, and Polish (MCEC LMS)
+
+We have a codebase that has partial/broken implementations of "Narrative Reports" and "Chat" from a previous attempt.
+Your goal is to **clean up the mess**, implement the features correctly according to the spec below, and ensure the rest of the site is healthy.
+
+## CREDENTIALS FOR TESTING
+* **Student:** `student1@mcec.com` / `Student1`
+* **Tutor:** `tutor1@melaniacalvin.com` / `Tutorone`
+* **Super Admin:** `test.ai@melaniacalvin.com` / `TestSuperAdmin`
+
+---
+
+## PHASE 1: SEARCH & DESTROY (Cleanup)
+Before building, scan the codebase for broken features.
+1. **Reports:** Look for any existing `progress_reports` tables or routes. If they are buggy or incomplete, DROP the table and DELETE the code. We start fresh.
+2. **Chat:** Look for broken messaging logic. If it doesn't work, clear it out.
+3. **Health Check:** Fix any immediate "Red" console errors or 404s in the existing navigation.
+
+---
+
+## PHASE 2: FEATURE IMPLEMENTATION
+
+### Feature A: Monthly Narrative Reports (The Priority)
+**1. Database Schema (`progress_reports`)**
+   - Fields: `id`, `courseId`, `studentId` (nullable for class reports), `tutorId`, `month` (e.g., '2024-05'), `narrativeText`, `status`, `createdAt`.
+
+**2. Tutor Workflow (The Author)**
+   - **UI:** Add "Progress Reports" tab in Course Management.
+   - **Action:** Tutor selects Month -> Selects Student (or "Class Report" if >2 students) -> Writes Narrative.
+   - **Metrics (Auto-Calculated):**
+     - *Hours Expected:* Fetch from `wallet` allocation.
+     - *Hours Done:* Fetch from `attendance` or `wallet` expenditure.
+     - *Grades:* Table of assignments for that month [Name | Raw % | Letter Grade].
+     - *Letter Grade Logic:* 90-100(A), 80-89(B), 70-79(C), 60-69(D), 50-59(E), <50(F).
+   - **PDF Generation:** Must generate a PDF using the existing PDF engine (like `jspdf` or `react-pdf`) matching our branding.
+
+**3. Parent Workflow (The Viewer)**
+   - **UI:** Parent Dashboard -> Select Child -> Select Course -> View Reports List.
+   - **Action:** "Download PDF".
+   - **Constraint:** Students MUST NOT see this tab/data.
+
+### Feature B: Chat & Direct Messaging
+**1. Logic & Security**
+   - **Course Chat:** All enrolled students + tutors + admins.
+   - **Direct Messages (DM):**
+     - Student can ONLY DM: Tutors of their courses, Classmates, or Admins.
+     - **BLOCK:** Random DM attempts to unconnected users.
+   - **UI:** WhatsApp style.
+     - **Ticks:** Grey = Delivered (Saved to DB). Blue = Read (Opened by recipient).
+     - *Note:* If WebSockets are too risky to implement now, use 5-second polling. Reliability > Complexity.
+
+---
+
+## PHASE 3: THE "DEEP SCAN" (QA & Security)
+Once features are built, run this audit:
+1. **Role Masquerade:** Log in as `Student1` and try to visit `/admin` or `/tutor` in the URL bar. If they get in, add a `RequireAuth` redirect immediately.
+2. **Mobile Check:** Ensure the sidebar/navbar doesn't break on mobile views.
+3. **Console Clean:** Fix any React unique key warnings or unused import warnings.
+
+## EXECUTION PROTOCOL
+* **If a fix fails twice:** Do not revert the whole project. Create a `FIX_FAILURE.md` file, log the error, and move to the next task.
+* **Final Output:** Generate a report confirming:
+  - ✅ Reports Feature Status (PDF generation working?)
+  - ✅ Chat Feature Status (Blue ticks working?)
+  - 🔒 Security Status (Are students locked out of Admin?)
+
+Start with Phase 1 now.
