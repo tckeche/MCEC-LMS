@@ -4066,7 +4066,7 @@ export async function registerRoutes(
   });
 
   // Top-up hours to wallet (admin, manager, or tutor with course permission)
-  app.post('/api/hour-wallets/top-up', isAuthenticated, requireRole("admin", "manager", "tutor"), async (req: Request, res: Response) => {
+  app.post('/api/hour-wallets/top-up', isAuthenticated, requireRole("admin", "manager"), async (req: Request, res: Response) => {
     try {
       const { studentId, courseId: rawCourseId, addMinutes, reason } = req.body;
       const performedById = req.user?.claims?.sub;
@@ -5848,7 +5848,7 @@ export async function registerRoutes(
             { method: 'GET', path: '/api/hour-wallets/:studentId/:courseId', access: 'Manager, Admin, Tutor', desc: 'Get specific wallet' },
             { method: 'GET', path: '/api/hour-wallets/course/:courseId', access: 'Manager, Admin, Tutor', desc: 'Get wallets by course' },
             { method: 'POST', path: '/api/hour-wallets', access: 'Manager, Admin', desc: 'Create hour wallet' },
-            { method: 'POST', path: '/api/hour-wallets/top-up', access: 'Admin, Manager, Tutor', desc: 'Add hours to wallet' },
+            { method: 'POST', path: '/api/hour-wallets/top-up', access: 'Admin, Manager', desc: 'Add hours to wallet' },
             { method: 'POST', path: '/api/wallets/allocate-month', access: 'Tutor, Admin, Manager', desc: 'Allocate monthly hours' },
           ]
         },
