@@ -1,5 +1,6 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
+import { useLocation } from "wouter";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
@@ -74,6 +75,7 @@ const formatUserName = (user?: ReportAuthor | null) => {
 export default function ReportsPage() {
   const { user } = useAuth();
   const { toast } = useToast();
+  const [location] = useLocation();
   const [reportType, setReportType] = useState<ReportType>("session");
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
@@ -82,6 +84,7 @@ export default function ReportsPage() {
   const [studentCourseKey, setStudentCourseKey] = useState("");
   const [rejectionReason, setRejectionReason] = useState("");
   const [rejectingReportId, setRejectingReportId] = useState<string | null>(null);
+  const [prefillApplied, setPrefillApplied] = useState(false);
 
   const { data: reports = [], isLoading } = useQuery<ReportDetails[]>({
     queryKey: ["/api/reports"],
@@ -103,6 +106,38 @@ export default function ReportsPage() {
   );
 
   const studentCourseOptions = useMemo(() => tutorStudents?.students ?? [], [tutorStudents]);
+  const currentMonth = useMemo(() => new Date().toISOString().slice(0, 7), []);
+  const queryParams = useMemo(() => new URLSearchParams(location.split("?")[1] ?? ""), [location]);
+  const queryStudentId = queryParams.get("studentId");
+  const queryCourseId = queryParams.get("courseId");
+  const queryMonth = queryParams.get("month");
+  const queryType = queryParams.get("type");
+
+  useEffect(() => {
+    if (prefillApplied || user?.role !== "tutor") return;
+    if (!queryStudentId || !queryCourseId) return;
+
+    if (queryType && queryType !== "monthly") return;
+    setReportType("monthly");
+    setStudentCourseKey(`${queryStudentId}:${queryCourseId}`);
+    setMonth(queryMonth || currentMonth);
+    setPrefillApplied(true);
+  }, [currentMonth, prefillApplied, queryCourseId, queryMonth, queryStudentId, queryType, user?.role]);
+
+  useEffect(() => {
+    if (user?.role !== "tutor") return;
+    if (!queryStudentId || !queryCourseId) return;
+    if (reportType !== "monthly") return;
+    if (title.trim()) return;
+
+    const matchingEntry = studentCourseOptions.find(
+      (entry) =>
+        entry.enrollment.studentId === queryStudentId && entry.enrollment.courseId === queryCourseId,
+    );
+    if (!matchingEntry) return;
+
+    setTitle(`Progress Report - ${formatUserName(matchingEntry.student)} - ${matchingEntry.courseName}`);
+  }, [queryCourseId, queryStudentId, reportType, studentCourseOptions, title, user?.role]);
 
   const createReportMutation = useMutation({
     mutationFn: async () => {

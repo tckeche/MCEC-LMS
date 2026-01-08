@@ -1,4 +1,5 @@
 import { Switch, Route, useLocation } from "wouter";
+import { useEffect } from "react";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
@@ -243,14 +244,32 @@ function AdminRoutes() {
 export function AppRouter() {
   const { user, isLoading } = useAuth();
   const { viewAsRole } = useViewAs();
-  const [location] = useLocation();
+  const [location, setLocation] = useLocation();
+
+  const isAuthRoute = location.startsWith("/auth/");
+  const isAdminAllowed = user?.isSuperAdmin || user?.role === "admin" || user?.role === "manager";
+  const isTutorAllowed = !!user && ["tutor", "admin", "manager"].includes(user.role);
+  const isFinanceAllowed = user?.isSuperAdmin || user?.role === "admin" || user?.role === "manager";
+
+  useEffect(() => {
+    const pathname = location.split("?")[0];
+    if (isLoading || !user) return;
+
+    if (pathname.startsWith("/admin") && !isAdminAllowed) {
+      setLocation("/");
+    } else if (pathname.startsWith("/tutor") && !isTutorAllowed) {
+      setLocation("/");
+    } else if (pathname.startsWith("/finance") && !isFinanceAllowed) {
+      setLocation("/");
+    }
+  }, [isAdminAllowed, isFinanceAllowed, isLoading, isTutorAllowed, location, setLocation, user]);
+
+  let content: React.ReactNode;
 
   if (isLoading) {
-    return <LoadingScreen />;
-  }
-
-  if (location.startsWith("/auth/")) {
-    return (
+    content = <LoadingScreen />;
+  } else if (isAuthRoute) {
+    content = (
       <Switch>
         <Route path="/auth/login" component={Login} />
         <Route path="/auth/parent-signup" component={ParentSignup} />
@@ -259,18 +278,12 @@ export function AppRouter() {
         <Route component={NotFound} />
       </Switch>
     );
-  }
-
-  if (!user) {
-    return <Landing />;
-  }
-
-  if (user.status === "pending") {
-    return <PendingAccountScreen />;
-  }
-
-  if (user.status === "rejected") {
-    return (
+  } else if (!user) {
+    content = <Landing />;
+  } else if (user.status === "pending") {
+    content = <PendingAccountScreen />;
+  } else if (user.status === "rejected") {
+    content = (
       <div className="min-h-screen bg-background flex flex-col">
         <header className="sticky top-0 z-50 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
           <div className="mx-auto flex h-20 max-w-7xl items-center justify-between px-4 md:px-8">
@@ -305,28 +318,29 @@ export function AppRouter() {
         </main>
       </div>
     );
+  } else {
+    const roleRoutes: Record<string, React.ReactNode> = {
+      student: <StudentRoutes />,
+      parent: <ParentRoutes />,
+      tutor: <TutorRoutes />,
+      manager: <ManagerRoutes />,
+      admin: <AdminRoutes />,
+    };
+    const effectiveRole = user.isSuperAdmin && viewAsRole ? viewAsRole : user.role;
+
+    content = (
+      <AuthenticatedLayout>
+        <Switch>
+          {user.isSuperAdmin && (
+            <Route path="/admin/super-admin" component={SuperAdminUsers} />
+          )}
+          {roleRoutes[effectiveRole] || <NotFound />}
+        </Switch>
+      </AuthenticatedLayout>
+    );
   }
 
-  const roleRoutes: Record<string, React.ReactNode> = {
-    student: <StudentRoutes />,
-    parent: <ParentRoutes />,
-    tutor: <TutorRoutes />,
-    manager: <ManagerRoutes />,
-    admin: <AdminRoutes />,
-  };
-
-  const effectiveRole = user.isSuperAdmin && viewAsRole ? viewAsRole : user.role;
-
-  return (
-    <AuthenticatedLayout>
-      <Switch>
-        {user.isSuperAdmin && (
-          <Route path="/admin/super-admin" component={SuperAdminUsers} />
-        )}
-        {roleRoutes[effectiveRole] || <NotFound />}
-      </Switch>
-    </AuthenticatedLayout>
-  );
+  return content;
 }
 
 function App() {
