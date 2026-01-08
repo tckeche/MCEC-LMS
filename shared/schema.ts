@@ -85,6 +85,9 @@ export const notificationTypeEnum = pgEnum("notification_type", [
   "enrollment",
   "submission",
   "system",
+  "session_approved",
+  "session_rejected",
+  "session_cancelled",
 ]);
 
 // Authentication and user status enums

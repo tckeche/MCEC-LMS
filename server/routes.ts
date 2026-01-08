@@ -232,7 +232,7 @@ const updateAssignmentSchema = z.object({
   title: z.string().min(1).max(255).optional(),
   description: z.string().optional(),
   instructions: z.string().optional(),
-  dueDate: z.string().datetime().optional(),
+  dueDate: z.string().datetime().optional().transform((val) => val ? new Date(val) : undefined),
   pointsPossible: z.number().int().positive().optional(),
   status: z.enum(["draft", "published", "closed"]).optional(),
 });
@@ -250,7 +250,7 @@ const updateAnnouncementSchema = z.object({
 });
 
 const updateGradeSchema = z.object({
-  points: z.number().int().min(0).optional(),
+  points: z.number().min(0).optional().transform((val) => val !== undefined ? String(val) : undefined),
   feedback: z.string().optional(),
 });
 
@@ -1403,7 +1403,7 @@ export async function registerRoutes(
       }
       
       let announcements;
-      let courses = [];
+      let courses: Awaited<ReturnType<typeof storage.getAllCourses>> = [];
       if (user.role === "admin" || user.role === "manager") {
         announcements = await storage.getAllAnnouncements();
         courses = await storage.getAllCourses();
@@ -1594,7 +1594,7 @@ export async function registerRoutes(
       if (studentGrades.length > 0) {
         const totalPercentage = studentGrades.reduce((sum, g) => {
           if (g.submission?.assignment?.pointsPossible && g.submission.assignment.pointsPossible > 0) {
-            return sum + (g.points / g.submission.assignment.pointsPossible * 100);
+            return sum + (Number(g.points) / g.submission.assignment.pointsPossible * 100);
           }
           return sum;
         }, 0);
@@ -1671,7 +1671,7 @@ export async function registerRoutes(
       if (tutorGrades.length > 0) {
         const totalPercentage = tutorGrades.reduce((sum, g) => {
           if (g.submission?.assignment?.pointsPossible && g.submission.assignment.pointsPossible > 0) {
-            return sum + (g.points / g.submission.assignment.pointsPossible * 100);
+            return sum + (Number(g.points) / g.submission.assignment.pointsPossible * 100);
           }
           return sum;
         }, 0);
@@ -1818,7 +1818,7 @@ export async function registerRoutes(
               const pointsPossible = g.submission?.assignment?.pointsPossible;
               if (pointsPossible && pointsPossible > 0) {
                 validGradeCount++;
-                return sum + ((g.points || 0) / pointsPossible * 100);
+                return sum + ((Number(g.points) || 0) / pointsPossible * 100);
               }
               return sum;
             }, 0);
@@ -1894,7 +1894,7 @@ export async function registerRoutes(
               const pointsPossible = g.submission?.assignment?.pointsPossible;
               if (pointsPossible && pointsPossible > 0) {
                 validGradeCount += 1;
-                return sum + ((g.points || 0) / pointsPossible) * 100;
+                return sum + ((Number(g.points) || 0) / pointsPossible) * 100;
               }
               return sum;
             }, 0);
@@ -1929,7 +1929,7 @@ export async function registerRoutes(
   });
 
   // Admin dashboard
-  app.get('/api/admin/dashboard', isAuthenticated, requireRole("[admin]"), requireAdminLevel(1), async (req: Request, res: Response) => {
+  app.get('/api/admin/dashboard', isAuthenticated, requireRole("admin"), requireAdminLevel(1), async (req: Request, res: Response) => {
     try {
       const allUsers = await storage.getAllUsers();
       const allCourses = await storage.getAllCourses();
@@ -2000,7 +2000,7 @@ export async function registerRoutes(
           if (childGrades.length > 0) {
             const totalPercentage = childGrades.reduce((sum, g) => {
               if (g.submission?.assignment?.pointsPossible && g.submission.assignment.pointsPossible > 0) {
-                return sum + (g.points / g.submission.assignment.pointsPossible * 100);
+                return sum + (Number(g.points) / g.submission.assignment.pointsPossible * 100);
               }
               return sum;
             }, 0);
@@ -2050,7 +2050,7 @@ export async function registerRoutes(
       if (studentGrades.length > 0) {
         const totalPercentage = studentGrades.reduce((sum, g) => {
           if (g.submission?.assignment?.pointsPossible && g.submission.assignment.pointsPossible > 0) {
-            return sum + (g.points / g.submission.assignment.pointsPossible * 100);
+            return sum + (Number(g.points) / g.submission.assignment.pointsPossible * 100);
           }
           return sum;
         }, 0);
@@ -2071,7 +2071,7 @@ export async function registerRoutes(
           }
           const data = courseMap.get(courseId);
           if (data && grade.submission.assignment.pointsPossible && grade.submission.assignment.pointsPossible > 0) {
-            const percentage = (grade.points / grade.submission.assignment.pointsPossible) * 100;
+            const percentage = (Number(grade.points) / grade.submission.assignment.pointsPossible) * 100;
             data.grades.push(percentage);
             data.graded++;
           }
@@ -3883,18 +3883,20 @@ export async function registerRoutes(
 
       // Notify the other participant
       const otherUserId = session.tutorId === userId ? session.studentId : session.tutorId;
-      try {
-        await storage.createNotification({
-          userId: otherUserId,
-          type: "session_cancelled",
-          title: "Session Cancelled",
-          message: `Your tutoring session has been cancelled. ${req.body.reason || ""}`.trim(),
-          link: "/sessions",
-          isRead: false,
-          relatedId: session.id,
-        });
-      } catch (notifError) {
-        console.error("Error creating notification:", notifError);
+      if (otherUserId) {
+        try {
+          await storage.createNotification({
+            userId: otherUserId,
+            type: "session_cancelled",
+            title: "Session Cancelled",
+            message: `Your tutoring session has been cancelled. ${req.body.reason || ""}`.trim(),
+            link: "/sessions",
+            isRead: false,
+            relatedId: session.id,
+          });
+        } catch (notifError) {
+          console.error("Error creating notification:", notifError);
+        }
       }
 
       res.json(updatedSession);

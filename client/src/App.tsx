@@ -32,6 +32,7 @@ import StudentScheduling from "@/pages/student/scheduling";
 import ParentDashboard from "@/pages/parent/dashboard";
 import ParentInvoices from "@/pages/parent/invoices";
 import ParentAttendance from "@/pages/parent/attendance";
+import ParentProgressReports from "@/pages/parent/progress-reports";
 import TutorDashboard from "@/pages/tutor/dashboard";
 import TutorCourses from "@/pages/tutor/courses";
 import TutorGradebook from "@/pages/tutor/gradebook";
@@ -171,6 +172,7 @@ function ParentRoutes() {
       <Route path="/" component={ParentDashboard} />
       <Route path="/chat" component={ChatPage} />
       <Route path="/reports" component={ReportsPage} />
+      <Route path="/progress-reports" component={ParentProgressReports} />
       <Route path="/disputes" component={DisputesPage} />
       <Route path="/courses" component={StudentCourses} />
       <Route path="/grades" component={StudentGrades} />
@@ -333,6 +335,22 @@ export function AppRouter() {
   };
 
   const effectiveRole = user.isSuperAdmin && viewAsRole ? viewAsRole : user.role;
+
+  useEffect(() => {
+    if (!user) return;
+    const pathname = location.split("?")[0];
+    const isAdminAllowed = user.isSuperAdmin || user.role === "admin" || user.role === "manager";
+    const isTutorAllowed = ["tutor", "admin", "manager"].includes(user.role);
+    const isFinanceAllowed = user.isSuperAdmin || user.role === "admin" || user.role === "manager";
+
+    if (pathname.startsWith("/admin") && !isAdminAllowed) {
+      setLocation("/");
+    } else if (pathname.startsWith("/tutor") && !isTutorAllowed) {
+      setLocation("/");
+    } else if (pathname.startsWith("/finance") && !isFinanceAllowed) {
+      setLocation("/");
+    }
+  }, [location, setLocation, user]);
 
   return (
     <AuthenticatedLayout>

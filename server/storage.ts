@@ -304,6 +304,7 @@ export interface IStorage {
   getHourWalletsByCourse(courseId: string): Promise<HourWalletWithDetails[]>;
   getAllHourWallets(): Promise<HourWalletWithDetails[]>;
   createHourWallet(wallet: InsertHourWallet): Promise<HourWallet>;
+  updateHourWallet(id: string, updates: Partial<InsertHourWallet>): Promise<HourWallet | undefined>;
   addMinutesToWallet(studentId: string, courseId: string, minutes: number): Promise<HourWallet | undefined>;
   deductMinutesFromWallet(studentId: string, courseId: string, minutes: number): Promise<HourWallet | undefined>;
   
@@ -2078,6 +2079,15 @@ export class DatabaseStorage implements IStorage {
   async createHourWallet(wallet: InsertHourWallet): Promise<HourWallet> {
     const [newWallet] = await db.insert(hourWallets).values(wallet).returning();
     return newWallet;
+  }
+
+  async updateHourWallet(id: string, updates: Partial<InsertHourWallet>): Promise<HourWallet | undefined> {
+    const [updated] = await db
+      .update(hourWallets)
+      .set({ ...updates, updatedAt: new Date() })
+      .where(eq(hourWallets.id, id))
+      .returning();
+    return updated;
   }
 
   async addMinutesToWallet(studentId: string, courseId: string, minutes: number): Promise<HourWallet | undefined> {
