@@ -1,0 +1,235 @@
+ROLE
+You are the Replit Agent acting as a senior full stack engineer for the existing MCEC LMS codebase. Your job is to deliver two features end to end, without breaking anything that already works.
+
+NON NEGOTIABLE RULES
+1. Do not change scheduling logic, session lifecycle logic, or finance logic, except where you must READ existing data to compute metrics for the new features.
+2. If something already exists and works, do not rebuild it. Reuse it.
+3. If something exists but is broken (the user says it is not working), either fix it properly or remove it completely before replacing it.
+4. Every UI action must have a working backend route and database persistence. No mock data.
+5. Do not leave “TODO” or partially wired screens. Everything must be testable from the UI.
+6. Add basic tests for critical paths. At minimum, one happy path per feature plus one permission denial test.
+7. Print a short acceptance report at the end showing each requirement as PASS or FAIL with where it was verified.
+
+CURRENT STACK
+First inspect the repo and confirm the stack (Express plus Drizzle plus Postgres plus React SPA is expected). Use the existing folder structure and patterns. Do not introduce Next.js or Prisma.
+
+PHASE 0. QUICK ARCHITECTURE CHECK (MANDATORY)
+A. Find and list existing tables and routes related to:
+1. Courses, enrollments
+2. Assignments, submissions, grades
+3. Hour wallets and wallet transactions
+4. Attendance logs and tutoring sessions
+5. Any existing “reports” feature
+6. Any existing “messaging” or “chat” feature
+B. If an existing report feature exists and is broken, remove it fully (routes, pages, components, schema references) so it cannot conflict with the new implementation.
+C. If an existing messaging feature exists and is broken, decide whether to repair or replace. If replacing, remove the broken parts to avoid conflicting routes or tables.
+
+FEATURE 1. MONTHLY PROGRESS NARRATIVE REPORTS (END TO END)
+
+BUSINESS REQUIREMENTS
+1. Within each course, create a new tab called “Progress Reports”.
+2. The tutor must complete a narrative report every month.
+3. The report must contain:
+a. Course name
+b. Tutor name (the author)
+c. Student name
+d. Month and year of the report
+4. If the course has more than 2 students:
+a. Tutor must choose via a dropdown either “Individual report” or “Class report”
+b. If individual, tutor selects which student to write for
+c. If class report, studentId is empty and the report is for the class
+5. Reports must be stored in the database and be retrievable later, grouped by month.
+6. Parent access:
+a. Parents can view and download their child’s reports
+b. Student cannot view narrative reports anywhere
+c. Admin can view and download any report
+7. Parent view must show:
+a. Each child in parent account
+b. Under each child, all their courses in alphabetical order
+c. Under each course, the monthly reports list, newest first
+8. The report must include monthly performance metrics per course:
+a. Tutorials expected for the month (from wallet allocation for that course and month)
+b. Tutorials done for the month (from wallet expenditure or attendance logs for that course and month)
+c. Average assignment mark for that month (from submissions for that course and month)
+d. A table of assignments submitted showing:
+i. Assignment name
+ii. Submission date
+iii. Raw mark percentage
+iv. Letter grade
+9. PDF download:
+a. Generate a PDF that matches the provided template style closely
+b. PDF must include the narrative comments and the metrics and the assignment table
+c. PDF must be downloadable by parent and admin
+
+DATA AND METRICS RULES (DO NOT CHANGE EXISTING LOGIC)
+1. Expected tutorials:
+a. Compute expectedMinutes for the month from the student’s wallet allocation for that course and month
+b. If your wallet schema stores minutes directly, use that
+c. If your wallet schema stores hours, convert to minutes
+d. TutorialsExpectedCount = ceil(expectedMinutes / standardTutorialMinutes)
+e. standardTutorialMinutes default 60, configurable in app settings, but do not block delivery if settings do not exist. If no settings exist, hardcode 60 in the report computation only.
+2. Tutorials done:
+a. Prefer attendance logs completed and billable minutes for that student, course, and month
+b. If attendance logs are missing, use wallet consumption transactions for that student, course, and month
+c. Compute doneMinutes and TutorialsDoneCount = floor(doneMinutes / standardTutorialMinutes) with standardTutorialMinutes above
+3. Outstanding rollover:
+a. Show rollover minutes carried from previous months for that student and course
+b. This is display only, do not change wallet rules
+
+DATABASE DESIGN
+Create new tables that do not conflict with existing ones, using Drizzle migrations.
+Minimum tables:
+1. progress_reports
+Fields:
+id, courseId, month (YYYY MM or first day of month date), scope (individual or class), studentId nullable, tutorId author, narrativeText, createdAt, updatedAt, status (draft or submitted)
+2. progress_report_exports
+Fields:
+id, reportId, generatedByUserId, pdfUrl or storagePath, createdAt
+Optional but recommended:
+3. progress_report_metrics_cache
+Fields:
+id, reportId, expectedMinutes, doneMinutes, avgAssignmentPercent, createdAt
+You may compute metrics on the fly instead of cache, but it must be fast and correct.
+
+API ENDPOINTS (RBAC ENFORCED)
+1. Tutor endpoints:
+a. GET list reports for a course (tutor must be primary or co tutor for that course)
+b. POST create draft report
+c. PATCH update draft report
+d. POST submit report (locks edits)
+e. GET generate or fetch PDF for a report
+2. Parent endpoints:
+a. GET parent children reports summary
+b. GET report details for a given reportId (must belong to one of their children)
+c. GET report PDF download
+3. Admin endpoints:
+a. GET any report list with filters course, month, student
+b. GET any report PDF download
+
+FRONTEND UI
+1. Tutor course page:
+Add “Progress Reports” tab.
+Inside it:
+a. Month selector default current month
+b. If course has more than 2 students, show dropdown for report type (Individual or Class)
+c. If Individual, show student dropdown
+d. Narrative text editor (simple textarea is fine, but must be usable)
+e. Buttons: Save draft, Submit, Download PDF
+f. List of previous reports for that course, grouped by month, with view and download
+2. Parent progress page:
+New page “Progress Reports”.
+a. Select child
+b. Show courses alphabetical
+c. For each course show:
+i. Expected vs Done for month
+ii. Avg assignment percent for month
+iii. Table of assignments with percent and letter grade
+iv. Reports list by month with Download PDF
+3. Student must not see this tab or this page.
+
+LETTER GRADE FUNCTION
+Implement a deterministic mapping for percent:
+90 to 100 A
+80 to 89 B
+70 to 79 C
+60 to 69 D
+50 to 59 E
+0 to 49 F
+Use this mapping in UI and PDF.
+
+PDF GENERATION
+Use the existing PDF approach in the repo if one exists (there is already invoice and payslip PDF generation). Reuse that pattern.
+The PDF must include:
+1. Title: Academic Progress Report
+2. Student name and month
+3. Date
+4. Course and tutor
+5. Hours completed out of expected for that month (both hours and minutes are fine, but show hours to parents)
+6. Tutor comments narrative
+7. Table of Topic or Task, Mark, Grade (adapt to assignments)
+8. Tutor name and signature line (signature can be blank line)
+
+FEATURE 2. COURSE CHAT AND DIRECT MESSAGING (END TO END)
+
+BUSINESS REQUIREMENTS
+1. A student can message:
+a. Anyone else in any course they are enrolled in (other students in that same course)
+b. Tutors for that course
+c. Managers and admins
+2. Student must not be able to message random users outside shared course, except managers and admins.
+3. Messaging must support:
+a. Course group chat per course
+b. Direct messages between two users where allowed
+4. UI must show WhatsApp style ticks:
+a. One grey tick when delivered (message stored and visible to recipient on next fetch)
+b. Two ticks that turn blue when read (recipient has opened the conversation and the message is marked read)
+5. Full persistence in database, not in memory.
+6. Do not break any existing pages.
+
+DATABASE DESIGN
+Create tables:
+1. conversations
+id, type (course or dm), courseId nullable, createdAt
+2. conversation_participants
+conversationId, userId, createdAt
+3. messages
+id, conversationId, senderId, body, createdAt
+4. message_receipts
+messageId, userId, deliveredAt, readAt
+Rules:
+When message created, create a receipt row for every participant except sender with deliveredAt null, readAt null.
+When recipient fetches messages, set deliveredAt if null.
+When recipient opens conversation and messages render, set readAt for messages visible, excluding their own.
+
+API ENDPOINTS WITH RBAC
+1. GET list conversations for current user
+2. POST create dm conversation (server must validate permissions)
+3. GET messages for conversation (server must validate current user is participant)
+4. POST send message to conversation
+5. POST mark read for conversation (or do it automatically on GET)
+6. GET course conversation by courseId, create if missing (only for enrolled users and staff)
+
+FRONTEND UI
+1. Add “Chat” tab inside each course page:
+a. Opens the course conversation
+b. Shows message list with bubbles
+c. Shows ticks on outgoing messages for the current user
+2. Add a general “Messages” page:
+a. Left panel list of conversations
+b. Right panel open conversation
+c. Search users for DM, but only show allowed users (shared course students plus managers plus admins)
+3. Keep it simple and reliable. Polling every 3 to 5 seconds is acceptable if websockets are not already present. If websockets exist, you may use them, but do not introduce new infra unless necessary.
+
+SECURITY AND PERMISSIONS
+1. Student can only create DM with:
+a. Another student who shares at least one enrolled course
+b. Any tutor that is assigned to any of the student’s courses
+c. Any manager or admin
+2. For course chat:
+Only participants are enrolled students plus assigned tutors plus managers plus admins
+3. Admin can view all conversations for dispute resolution
+
+RETENTION
+If the codebase already has retention logic, reuse it. If not, implement a simple rule in queries:
+Only show messages from last 12 months, unless user is admin. Do not delete data yet.
+
+TESTS
+Add at least:
+1. Report creation happy path for tutor
+2. Report visibility denial for student
+3. Parent can download report for their child
+4. Messaging happy path for course chat
+5. Messaging denial for student trying to DM a non shared student
+
+DELIVERY CHECKLIST
+Before you say done, verify manually in Preview:
+1. Tutor creates a report draft, submits, downloads PDF
+2. Parent views child reports and downloads PDF
+3. Student cannot see reports
+4. Student sends course chat message, recipient sees it, ticks update to delivered and read
+5. DM works only when allowed
+Then output an acceptance report with PASS or FAIL per bullet requirement.
+
+IMPORTANT
+Do not ask me questions unless something is genuinely impossible without a decision. If you must assume, state the assumption and implement the safest default.
+Also do not touch course scheduling, wallet deduction logic, or finance workflows. Read only for metrics.

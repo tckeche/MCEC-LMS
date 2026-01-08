@@ -124,6 +124,17 @@ export const reportTypeEnum = pgEnum("report_type", [
   "monthly",
 ]);
 
+export const reportScopeEnum = pgEnum("report_scope", [
+  "individual",
+  "class",
+]);
+
+// Chat system enums
+export const chatThreadTypeEnum = pgEnum("chat_thread_type", [
+  "dm",
+  "course",
+]);
+
 export const reportStatusEnum = pgEnum("report_status", [
   "draft",
   "submitted",
@@ -327,9 +338,11 @@ export const notifications = pgTable("notifications", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
-// Chat system tables (Direct Messages)
+// Chat system tables (Direct Messages and Course Chats)
 export const chatThreads = pgTable("chat_threads", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  type: chatThreadTypeEnum("type").default("dm").notNull(),
+  courseId: varchar("course_id").references(() => courses.id, { onDelete: "cascade" }),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -368,6 +381,26 @@ export const chatMessages = pgTable(
   (table) => [
     index("IDX_chat_messages_thread_created").on(table.threadId, table.createdAt),
     index("IDX_chat_messages_sender").on(table.senderId),
+  ],
+);
+
+export const messageReceipts = pgTable(
+  "message_receipts",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    messageId: varchar("message_id")
+      .notNull()
+      .references(() => chatMessages.id, { onDelete: "cascade" }),
+    userId: varchar("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    deliveredAt: timestamp("delivered_at"),
+    readAt: timestamp("read_at"),
+    createdAt: timestamp("created_at").defaultNow(),
+  },
+  (table) => [
+    index("IDX_message_receipts_message").on(table.messageId),
+    index("IDX_message_receipts_user").on(table.userId),
   ],
 );
 
@@ -464,6 +497,7 @@ export const reports = pgTable(
   {
     id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
     type: reportTypeEnum("type").notNull(),
+    scope: reportScopeEnum("scope").default("individual"),
     status: reportStatusEnum("status").default("draft").notNull(),
     title: varchar("title", { length: 255 }).notNull(),
     content: text("content").notNull(),
@@ -784,7 +818,11 @@ export const notificationsRelations = relations(notifications, ({ one }) => ({
 }));
 
 // Chat system relations
-export const chatThreadsRelations = relations(chatThreads, ({ many }) => ({
+export const chatThreadsRelations = relations(chatThreads, ({ one, many }) => ({
+  course: one(courses, {
+    fields: [chatThreads.courseId],
+    references: [courses.id],
+  }),
   participants: many(chatParticipants),
   messages: many(chatMessages),
 }));
@@ -800,13 +838,25 @@ export const chatParticipantsRelations = relations(chatParticipants, ({ one }) =
   }),
 }));
 
-export const chatMessagesRelations = relations(chatMessages, ({ one }) => ({
+export const chatMessagesRelations = relations(chatMessages, ({ one, many }) => ({
   thread: one(chatThreads, {
     fields: [chatMessages.threadId],
     references: [chatThreads.id],
   }),
   sender: one(users, {
     fields: [chatMessages.senderId],
+    references: [users.id],
+  }),
+  receipts: many(messageReceipts),
+}));
+
+export const messageReceiptsRelations = relations(messageReceipts, ({ one }) => ({
+  message: one(chatMessages, {
+    fields: [messageReceipts.messageId],
+    references: [chatMessages.id],
+  }),
+  user: one(users, {
+    fields: [messageReceipts.userId],
     references: [users.id],
   }),
 }));
@@ -1157,8 +1207,10 @@ export type NotificationType = "grade_posted" | "assignment_due" | "announcement
 export type ChatThread = typeof chatThreads.$inferSelect;
 export type ChatParticipant = typeof chatParticipants.$inferSelect;
 export type ChatMessage = typeof chatMessages.$inferSelect;
+export type MessageReceipt = typeof messageReceipts.$inferSelect;
 export type InsertChatMessage = z.infer<typeof insertChatMessageSchema>;
 export type ChatUserSummary = Pick<User, "id" | "firstName" | "lastName" | "email" | "role" | "profileImageUrl">;
+export type ChatThreadType = "dm" | "course";
 
 export type Report = typeof reports.$inferSelect;
 export type InsertReport = z.infer<typeof insertReportSchema>;
@@ -1166,9 +1218,36 @@ export type Dispute = typeof disputes.$inferSelect;
 export type InsertDispute = z.infer<typeof insertDisputeSchema>;
 
 export type ReportType = "session" | "monthly";
+export type ReportScope = "individual" | "class";
 export type ReportStatus = "draft" | "submitted" | "approved" | "rejected";
 export type DisputeTargetType = "session" | "invoice" | "report";
 export type DisputeStatus = "open" | "under_review" | "resolved" | "rejected";
+
+export type ChatMessageWithReceipts = ChatMessage & {
+  receipts: MessageReceipt[];
+  sender: User;
+};
+
+export type ChatThreadWithDetails = ChatThread & {
+  participants: (ChatParticipant & { user: User })[];
+  messages: ChatMessageWithReceipts[];
+  course?: Course | null;
+};
+
+export type ProgressReportMetrics = {
+  expectedMinutes: number;
+  doneMinutes: number;
+  expectedTutorials: number;
+  doneTutorials: number;
+  avgAssignmentPercent: number;
+  rolloverMinutes: number;
+  assignments: {
+    name: string;
+    submittedAt: string | null;
+    percentMark: number;
+    letterGrade: string;
+  }[];
+};
 
 // Extended types for frontend use
 export type CourseWithTutor = Course & {
