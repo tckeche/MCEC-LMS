@@ -9,7 +9,7 @@
 - `client/src/pages/tutor/course-detail.tsx`: Added role-aware "Add Hours" gating, a per-student "Write Report" shortcut (prefilled monthly params), and a direct-message icon that jumps to chat threads or creates them when missing.
 - `client/src/pages/reports.tsx`: Added query-param prefill logic for tutor monthly reports (student/course/month/title) without disrupting existing flows.
 - `client/src/pages/chat.tsx`: Added query-param handling for `threadId` and `participantId`, including auto-select and get-or-create behavior.
-- `client/src/App.tsx`: Added a global route guard to redirect students away from `/admin`, `/tutor`, and `/finance` paths.
+- `client/src/App.tsx`: Added a global route guard for `/admin`, `/tutor`, and `/finance` and ensured hooks execute consistently before early returns to prevent blank screens after login.
 - `server/routes.ts`: Tightened RBAC on `/api/hour-wallets/top-up` to admin/manager only and updated API manifest entry.
 
 ## ⚠️ OUTSTANDING ISSUES
