@@ -2361,12 +2361,14 @@ export async function registerRoutes(
         .pick({ type: true, title: true, content: true, month: true, sessionId: true, studentId: true, courseId: true })
         .extend({
           type: z.enum(["session", "monthly"]),
+          scope: z.enum(["individual", "class"]).optional(),
           title: z.string().min(3).max(255),
           content: z.string().min(10),
           month: z.string().regex(/^\d{4}-\d{2}$/).optional(),
           sessionId: z.string().optional(),
           studentId: z.string().optional(),
           courseId: z.string().optional(),
+          metricsJson: z.record(z.any()).optional(),
         })
         .parse(req.body);
 
@@ -2434,9 +2436,11 @@ export async function registerRoutes(
 
       const report = await storage.createReport({
         type: payload.type,
+        scope: payload.scope ?? "individual",
         title: payload.title,
         content: payload.content,
         month: payload.month,
+        metricsJson: payload.metricsJson ?? null,
         sessionId: payload.sessionId ?? null,
         studentId: payload.type === "session" ? sessionStudentId : payload.studentId ?? null,
         courseId: payload.type === "session" ? sessionCourseId : payload.courseId ?? null,
@@ -2590,6 +2594,123 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Error rejecting report:", error);
       res.status(500).json({ message: "Failed to reject report" });
+    }
+  });
+
+  // Compute progress metrics for a student/course/month (Tutor only)
+  app.get('/api/reports/progress-metrics', isAuthenticated, requireRole("tutor", "admin", "manager"), async (req: Request, res: Response) => {
+    try {
+      const dbUser = getDbUser(req);
+      if (!dbUser) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+
+      const querySchema = z.object({
+        studentId: z.string(),
+        courseId: z.string(),
+        month: z.string().regex(/^\d{4}-\d{2}$/),
+      });
+
+      const { studentId, courseId, month } = querySchema.parse(req.query);
+
+      if (dbUser.role === "tutor") {
+        const course = await storage.getCourse(courseId);
+        if (!course || course.tutorId !== dbUser.id) {
+          return res.status(403).json({ message: "You can only compute metrics for your own courses" });
+        }
+      }
+
+      const metrics = await storage.computeProgressMetrics(studentId, courseId, month);
+      res.json(metrics);
+    } catch (error) {
+      console.error("Error computing progress metrics:", error);
+      res.status(500).json({ message: "Failed to compute progress metrics" });
+    }
+  });
+
+  // Generate PDF for a report
+  app.get('/api/reports/:id/pdf', isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const activeUser = await getActiveUser(req, res);
+      if (!activeUser) return;
+
+      const report = await storage.getReportWithDetails(req.params.id);
+      if (!report) {
+        return res.status(404).json({ message: "Report not found" });
+      }
+
+      const isOwner = report.createdById === activeUser.userId;
+      const isStudent = report.studentId === activeUser.userId;
+      let isParent = false;
+      if (activeUser.user.role === "parent" && report.studentId) {
+        const relationships = await storage.getParentChildren(activeUser.userId);
+        isParent = relationships.some((rel) => rel.childId === report.studentId);
+      }
+
+      const allowed = canViewReport({
+        role: activeUser.user.role,
+        reportType: report.type,
+        isOwner,
+        isStudent,
+        isParent,
+      });
+
+      if (!allowed) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+
+      const PDFDocument = require("pdfkit");
+      const doc = new PDFDocument({ margin: 50 });
+
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Content-Disposition", `attachment; filename="report-${report.id}.pdf"`);
+      doc.pipe(res);
+
+      doc.fontSize(20).text("Progress Report", { align: "center" });
+      doc.moveDown();
+      doc.fontSize(14).text(`Title: ${report.title}`);
+      doc.text(`Month: ${report.month || "N/A"}`);
+      doc.text(`Status: ${report.status}`);
+      doc.text(`Created: ${report.createdAt?.toLocaleDateString() || "N/A"}`);
+      if (report.student) {
+        doc.text(`Student: ${report.student.firstName} ${report.student.lastName}`);
+      }
+      if (report.course) {
+        doc.text(`Course: ${report.course.title}`);
+      }
+      doc.moveDown();
+
+      doc.fontSize(16).text("Report Content");
+      doc.moveDown(0.5);
+      doc.fontSize(12).text(report.content || "No content available");
+
+      if (report.metricsJson) {
+        const metrics = report.metricsJson as Record<string, any>;
+        doc.moveDown();
+        doc.fontSize(16).text("Performance Metrics");
+        doc.moveDown(0.5);
+        doc.fontSize(12);
+        if (metrics.expectedMinutes !== undefined) {
+          doc.text(`Expected Minutes: ${metrics.expectedMinutes}`);
+          doc.text(`Done Minutes: ${metrics.doneMinutes || 0}`);
+          doc.text(`Expected Tutorials: ${metrics.expectedTutorials || 0}`);
+          doc.text(`Done Tutorials: ${metrics.doneTutorials || 0}`);
+          doc.text(`Avg Assignment Percent: ${metrics.avgAssignmentPercent || 0}%`);
+          doc.text(`Rollover Minutes: ${metrics.rolloverMinutes || 0}`);
+        }
+        if (metrics.assignments && Array.isArray(metrics.assignments) && metrics.assignments.length > 0) {
+          doc.moveDown();
+          doc.text("Assignments:");
+          metrics.assignments.forEach((a: any) => {
+            doc.text(`  - ${a.name}: ${a.percentMark}% (${a.letterGrade})`);
+          });
+        }
+      }
+
+      doc.end();
+    } catch (error) {
+      console.error("Error generating PDF:", error);
+      res.status(500).json({ message: "Failed to generate PDF" });
     }
   });
 

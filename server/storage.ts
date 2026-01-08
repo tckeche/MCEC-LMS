@@ -240,8 +240,26 @@ export interface IStorage {
     studentId?: string;
     studentIds?: string[];
     month?: string;
+    scope?: "individual" | "class";
   }): Promise<ReportWithDetails[]>;
   updateReport(id: string, updates: Partial<Report>): Promise<Report | undefined>;
+  
+  // Progress Report metrics computation
+  computeProgressMetrics(studentId: string, courseId: string, month: string): Promise<{
+    expectedMinutes: number;
+    doneMinutes: number;
+    expectedTutorials: number;
+    doneTutorials: number;
+    avgAssignmentPercent: number;
+    rolloverMinutes: number;
+    assignments: {
+      name: string;
+      submittedAt: string | null;
+      percentMark: number;
+      letterGrade: string;
+    }[];
+  }>;
+  
   createDispute(dispute: InsertDispute): Promise<Dispute>;
   getDispute(id: string): Promise<Dispute | undefined>;
   getDisputes(filters?: {
@@ -398,6 +416,14 @@ export interface IStorage {
 }
 
 export class DatabaseStorage implements IStorage {
+  private calculateLetterGrade(percent: number): string {
+    if (percent >= 90) return "A";
+    if (percent >= 80) return "B";
+    if (percent >= 70) return "C";
+    if (percent >= 60) return "D";
+    return "F";
+  }
+
   // User operations (mandatory for Replit Auth)
   async getUser(id: string): Promise<User | undefined> {
     const [user] = await db.select().from(users).where(eq(users.id, id));
@@ -1606,6 +1632,113 @@ export class DatabaseStorage implements IStorage {
       .where(eq(reports.id, id))
       .returning();
     return updated;
+  }
+
+  async computeProgressMetrics(studentId: string, courseId: string, month: string): Promise<{
+    expectedMinutes: number;
+    doneMinutes: number;
+    expectedTutorials: number;
+    doneTutorials: number;
+    avgAssignmentPercent: number;
+    rolloverMinutes: number;
+    assignments: {
+      name: string;
+      submittedAt: string | null;
+      percentMark: number;
+      letterGrade: string;
+    }[];
+  }> {
+    const [year, monthNum] = month.split("-").map(Number);
+    const monthStart = new Date(year, monthNum - 1, 1);
+    const monthEnd = new Date(year, monthNum, 0, 23, 59, 59);
+
+    const completedSessions = await db
+      .select()
+      .from(tutoringSessions)
+      .where(and(
+        eq(tutoringSessions.courseId, courseId),
+        eq(tutoringSessions.studentId, studentId),
+        eq(tutoringSessions.status, "completed"),
+        gte(tutoringSessions.scheduledStartTime, monthStart),
+        lte(tutoringSessions.scheduledStartTime, monthEnd)
+      ));
+
+    const wallet = await this.getHourWalletByStudentCourse(studentId, courseId);
+
+    const doneMinutes = completedSessions.reduce((sum, s) => sum + (s.billableMinutes || 0), 0);
+    const doneTutorials = completedSessions.length;
+    const purchasedMinutes = wallet?.purchasedMinutes || 0;
+    const consumedMinutes = wallet?.consumedMinutes || 0;
+    const expectedMinutes = purchasedMinutes;
+    const expectedTutorials = Math.ceil(expectedMinutes / 60);
+    const rolloverMinutes = Math.max(0, purchasedMinutes - consumedMinutes);
+
+    const courseAssignments = await db
+      .select()
+      .from(assignments)
+      .where(and(
+        eq(assignments.courseId, courseId),
+        gte(assignments.dueDate, monthStart),
+        lte(assignments.dueDate, monthEnd)
+      ));
+
+    const assignmentDetails: {
+      name: string;
+      submittedAt: string | null;
+      percentMark: number;
+      letterGrade: string;
+    }[] = [];
+
+    let totalPercent = 0;
+    let gradedCount = 0;
+
+    for (const assignment of courseAssignments) {
+      const [submission] = await db
+        .select()
+        .from(submissions)
+        .where(and(
+          eq(submissions.assignmentId, assignment.id),
+          eq(submissions.studentId, studentId)
+        ));
+
+      let percentMark = 0;
+      let letterGrade = "N/A";
+      let submittedAt: string | null = null;
+
+      if (submission) {
+        submittedAt = submission.submittedAt?.toISOString() || null;
+        const [grade] = await db
+          .select()
+          .from(grades)
+          .where(eq(grades.submissionId, submission.id));
+
+        if (grade) {
+          const points = parseFloat(grade.points);
+          const pointsPossible = assignment.pointsPossible || 100;
+          percentMark = Math.round((points / pointsPossible) * 100);
+          letterGrade = this.calculateLetterGrade(percentMark);
+          totalPercent += percentMark;
+          gradedCount++;
+        }
+      }
+
+      assignmentDetails.push({
+        name: assignment.title,
+        submittedAt,
+        percentMark,
+        letterGrade,
+      });
+    }
+
+    return {
+      expectedMinutes,
+      doneMinutes,
+      expectedTutorials,
+      doneTutorials,
+      avgAssignmentPercent: gradedCount > 0 ? Math.round(totalPercent / gradedCount) : 0,
+      rolloverMinutes,
+      assignments: assignmentDetails,
+    };
   }
 
   async createDispute(dispute: InsertDispute): Promise<Dispute> {

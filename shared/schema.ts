@@ -502,6 +502,7 @@ export const reports = pgTable(
     title: varchar("title", { length: 255 }).notNull(),
     content: text("content").notNull(),
     month: varchar("month", { length: 7 }),
+    metricsJson: jsonb("metrics_json"),
     sessionId: varchar("session_id").references(() => tutoringSessions.id, { onDelete: "set null" }),
     studentId: varchar("student_id").references(() => users.id, { onDelete: "set null" }),
     courseId: varchar("course_id").references(() => courses.id, { onDelete: "set null" }),
