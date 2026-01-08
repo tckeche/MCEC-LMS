@@ -87,6 +87,12 @@ const navItems: NavItem[] = [
     roles: ["student", "parent"],
   },
   {
+    title: "Progress Reports",
+    url: "/progress-reports",
+    icon: FileText,
+    roles: ["parent"],
+  },
+  {
     title: "Invoices",
     url: "/invoices",
     icon: FileText,
