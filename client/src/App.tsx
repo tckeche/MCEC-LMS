@@ -334,6 +334,22 @@ export function AppRouter() {
 
   const effectiveRole = user.isSuperAdmin && viewAsRole ? viewAsRole : user.role;
 
+  useEffect(() => {
+    if (!user) return;
+    const pathname = location.split("?")[0];
+    const isAdminAllowed = user.isSuperAdmin || user.role === "admin" || user.role === "manager";
+    const isTutorAllowed = ["tutor", "admin", "manager"].includes(user.role);
+    const isFinanceAllowed = user.isSuperAdmin || user.role === "admin" || user.role === "manager";
+
+    if (pathname.startsWith("/admin") && !isAdminAllowed) {
+      setLocation("/");
+    } else if (pathname.startsWith("/tutor") && !isTutorAllowed) {
+      setLocation("/");
+    } else if (pathname.startsWith("/finance") && !isFinanceAllowed) {
+      setLocation("/");
+    }
+  }, [location, setLocation, user]);
+
   return (
     <AuthenticatedLayout>
       <Switch>
