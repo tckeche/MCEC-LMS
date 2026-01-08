@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
+import { useLocation } from "wouter";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
@@ -52,9 +53,11 @@ const formatTimestamp = (timestamp: string) => {
 
 export default function ChatPage() {
   const { user } = useAuth();
+  const [location] = useLocation();
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
   const [selectedUserId, setSelectedUserId] = useState<string>("");
   const [messageDraft, setMessageDraft] = useState<string>("");
+  const [prefillHandled, setPrefillHandled] = useState(false);
 
   const { data: chatUsers = [], isLoading: chatUsersLoading } = useQuery<ChatUser[]>({
     queryKey: ["/api/chats/users"],
@@ -69,11 +72,16 @@ export default function ChatPage() {
     enabled: Boolean(selectedThreadId),
   });
 
+  const queryParams = useMemo(() => new URLSearchParams(location.split("?")[1] ?? ""), [location]);
+  const queryThreadId = queryParams.get("threadId");
+  const queryParticipantId = queryParams.get("participantId");
+
   useEffect(() => {
-    if (!selectedThreadId && threads.length > 0) {
+    if (selectedThreadId || queryThreadId || queryParticipantId) return;
+    if (threads.length > 0) {
       setSelectedThreadId(threads[0].id);
     }
-  }, [selectedThreadId, threads]);
+  }, [queryParticipantId, queryThreadId, selectedThreadId, threads]);
 
   const activeThread = useMemo(
     () => threads.find((thread) => thread.id === selectedThreadId),
@@ -82,8 +90,8 @@ export default function ChatPage() {
   const activeParticipant = activeThread?.participants[0];
 
   const createThreadMutation = useMutation({
-    mutationFn: async () => {
-      const res = await apiRequest("POST", "/api/chats", { participantId: selectedUserId });
+    mutationFn: async (participantId: string) => {
+      const res = await apiRequest("POST", "/api/chats", { participantId });
       return res.json();
     },
     onSuccess: (thread: { id: string }) => {
@@ -127,6 +135,28 @@ export default function ChatPage() {
     () => chatUsers.filter((chatUser) => chatUser.id !== user?.id),
     [chatUsers, user?.id],
   );
+
+  useEffect(() => {
+    if (prefillHandled) return;
+    if (queryThreadId) {
+      setSelectedThreadId(queryThreadId);
+      setPrefillHandled(true);
+      return;
+    }
+    if (!queryParticipantId) return;
+
+    const existingThread = threads.find((thread) =>
+      thread.participants.some((participant) => participant.id === queryParticipantId),
+    );
+    if (existingThread) {
+      setSelectedThreadId(existingThread.id);
+      setPrefillHandled(true);
+      return;
+    }
+
+    createThreadMutation.mutate(queryParticipantId);
+    setPrefillHandled(true);
+  }, [createThreadMutation, prefillHandled, queryParticipantId, queryThreadId, threads]);
 
   const inboxGuidance = useMemo(() => {
     switch (user?.role) {
@@ -180,7 +210,7 @@ export default function ChatPage() {
                 <Button
                   className="w-full"
                   disabled={!selectedUserId || createThreadMutation.isPending}
-                  onClick={() => createThreadMutation.mutate()}
+                  onClick={() => createThreadMutation.mutate(selectedUserId)}
                 >
                   Start Message
                 </Button>
