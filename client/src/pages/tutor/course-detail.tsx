@@ -1,7 +1,7 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { useParams, Link } from "wouter";
+import { useParams, Link, useLocation } from "wouter";
 import { useState, useEffect } from "react";
-import { BookOpen, Users, UserPlus, ArrowLeft, Check, Search, Video, Pencil, ExternalLink, X, Loader2, Clock, Plus } from "lucide-react";
+import { Users, UserPlus, ArrowLeft, Check, Video, Pencil, ExternalLink, X, Loader2, Clock, Plus, MessageCircle, FileText } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -28,6 +28,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Progress } from "@/components/ui/progress";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/hooks/useAuth";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { CourseWithTutor, User, Enrollment, HourWallet } from "@shared/schema";
 
@@ -40,8 +41,15 @@ interface WalletWithDetails extends HourWallet {
   course?: { id: string; title: string };
 }
 
+type ChatThreadSummary = {
+  id: string;
+  participants: User[];
+};
+
 export default function TutorCourseDetail() {
   const { id } = useParams<{ id: string }>();
+  const [, setLocation] = useLocation();
+  const { user } = useAuth();
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [isEditingTeamsLink, setIsEditingTeamsLink] = useState(false);
@@ -69,6 +77,10 @@ export default function TutorCourseDetail() {
     enabled: !!id,
   });
 
+  const { data: chatThreads = [] } = useQuery<ChatThreadSummary[]>({
+    queryKey: ["/api/chats"],
+  });
+
   const enrollMutation = useMutation({
     mutationFn: async (studentId: string) => {
       return apiRequest("POST", "/api/enrollments", {
@@ -89,6 +101,24 @@ export default function TutorCourseDetail() {
       toast({
         title: "Error",
         description: "Failed to enroll student. Please try again.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const createChatThreadMutation = useMutation({
+    mutationFn: async (participantId: string) => {
+      const res = await apiRequest("POST", "/api/chats", { participantId });
+      return res.json();
+    },
+    onSuccess: (thread: { id: string }) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/chats"] });
+      setLocation(`/chat?threadId=${thread.id}`);
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Error",
+        description: error?.message || "Failed to start chat. Please try again.",
         variant: "destructive",
       });
     },
@@ -178,6 +208,8 @@ export default function TutorCourseDetail() {
     });
   };
 
+  const canAddHours = user?.role === "admin" || user?.role === "manager";
+
   const getWalletForStudent = (studentId: string) => {
     return wallets?.find(w => w.studentId === studentId);
   };
@@ -199,6 +231,27 @@ export default function TutorCourseDetail() {
     const query = searchQuery.toLowerCase();
     return fullName.includes(query) || email.includes(query);
   });
+
+  const handleWriteReport = (studentId: string, courseId: string) => {
+    const params = new URLSearchParams({
+      studentId,
+      courseId,
+      type: "monthly",
+      month: new Date().toISOString().slice(0, 7),
+    });
+    setLocation(`/reports?${params.toString()}`);
+  };
+
+  const handleStartChat = (studentId: string) => {
+    const existingThread = chatThreads.find((thread) =>
+      thread.participants.some((participant) => participant.id === studentId),
+    );
+    if (existingThread) {
+      setLocation(`/chat?threadId=${existingThread.id}`);
+      return;
+    }
+    createChatThreadMutation.mutate(studentId);
+  };
 
   if (courseLoading) {
     return (
@@ -469,16 +522,37 @@ export default function TutorCourseDetail() {
                       ) : (
                         <span className="text-sm text-muted-foreground">No wallet</span>
                       )}
-                      
+
                       <Button
                         variant="outline"
                         size="sm"
-                        onClick={() => enrollment.student && handleOpenAddHoursDialog(enrollment.student)}
-                        data-testid={`button-add-hours-${enrollment.studentId}`}
+                        onClick={() => handleWriteReport(enrollment.studentId, enrollment.courseId)}
+                        data-testid={`button-write-report-${enrollment.studentId}`}
                       >
-                        <Plus className="mr-1 h-3 w-3" />
-                        Add Hours
+                        <FileText className="mr-1 h-3 w-3" />
+                        Write Report
                       </Button>
+
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => handleStartChat(enrollment.studentId)}
+                        data-testid={`button-chat-${enrollment.studentId}`}
+                      >
+                        <MessageCircle className="h-4 w-4" />
+                      </Button>
+                      
+                      {canAddHours && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => enrollment.student && handleOpenAddHoursDialog(enrollment.student)}
+                          data-testid={`button-add-hours-${enrollment.studentId}`}
+                        >
+                          <Plus className="mr-1 h-3 w-3" />
+                          Add Hours
+                        </Button>
+                      )}
                       
                       <Badge variant={enrollment.status === "active" ? "default" : "secondary"}>
                         {enrollment.status}
@@ -499,67 +573,69 @@ export default function TutorCourseDetail() {
         </CardContent>
       </Card>
 
-      <Dialog open={addHoursDialogOpen} onOpenChange={setAddHoursDialogOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Add Hours to Wallet</DialogTitle>
-            <DialogDescription>
-              Add tutoring hours for {selectedStudentForHours?.firstName} {selectedStudentForHours?.lastName} in {course?.title}
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4 py-4">
-            <div className="space-y-2">
-              <Label htmlFor="minutes">Minutes to Add</Label>
-              <Input
-                id="minutes"
-                type="number"
-                min={15}
-                step={15}
-                value={addMinutes}
-                onChange={(e) => setAddMinutes(parseInt(e.target.value) || 0)}
-                placeholder="60"
-                data-testid="input-add-minutes"
-              />
-              <p className="text-xs text-muted-foreground">
-                {addMinutes > 0 ? `${Math.floor(addMinutes / 60)}h ${addMinutes % 60}m` : "0h 0m"}
-              </p>
+      {canAddHours && (
+        <Dialog open={addHoursDialogOpen} onOpenChange={setAddHoursDialogOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Add Hours to Wallet</DialogTitle>
+              <DialogDescription>
+                Add tutoring hours for {selectedStudentForHours?.firstName} {selectedStudentForHours?.lastName} in {course?.title}
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4 py-4">
+              <div className="space-y-2">
+                <Label htmlFor="minutes">Minutes to Add</Label>
+                <Input
+                  id="minutes"
+                  type="number"
+                  min={15}
+                  step={15}
+                  value={addMinutes}
+                  onChange={(e) => setAddMinutes(parseInt(e.target.value) || 0)}
+                  placeholder="60"
+                  data-testid="input-add-minutes"
+                />
+                <p className="text-xs text-muted-foreground">
+                  {addMinutes > 0 ? `${Math.floor(addMinutes / 60)}h ${addMinutes % 60}m` : "0h 0m"}
+                </p>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="reason">Reason (required)</Label>
+                <Input
+                  id="reason"
+                  value={addReason}
+                  onChange={(e) => setAddReason(e.target.value)}
+                  placeholder="e.g., Package purchase, bonus hours"
+                  data-testid="input-add-reason"
+                />
+              </div>
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="reason">Reason (required)</Label>
-              <Input
-                id="reason"
-                value={addReason}
-                onChange={(e) => setAddReason(e.target.value)}
-                placeholder="e.g., Package purchase, bonus hours"
-                data-testid="input-add-reason"
-              />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => setAddHoursDialogOpen(false)}
-              data-testid="button-cancel-add-hours"
-            >
-              Cancel
-            </Button>
-            <Button
-              onClick={handleSubmitAddHours}
-              disabled={addHoursMutation.isPending || !addReason.trim() || addMinutes <= 0}
-              data-testid="button-submit-add-hours"
-            >
-              {addHoursMutation.isPending ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Adding...
-                </>
-              ) : (
-                "Add Hours"
-              )}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+            <DialogFooter>
+              <Button
+                variant="outline"
+                onClick={() => setAddHoursDialogOpen(false)}
+                data-testid="button-cancel-add-hours"
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={handleSubmitAddHours}
+                disabled={addHoursMutation.isPending || !addReason.trim() || addMinutes <= 0}
+                data-testid="button-submit-add-hours"
+              >
+                {addHoursMutation.isPending ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Adding...
+                  </>
+                ) : (
+                  "Add Hours"
+                )}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
     </div>
   );
 }
