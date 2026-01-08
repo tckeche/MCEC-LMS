@@ -198,7 +198,7 @@ function WeekCalendar({ sessions }: { sessions: TutoringSessionWithDetails[] }) 
                       </TooltipTrigger>
                       <TooltipContent>
                         <div className="text-xs">
-                          <p className="font-medium">{session.course?.name}</p>
+                          <p className="font-medium">{session.course?.title}</p>
                           <p>{format(sessionDate, "h:mm a")}</p>
                           <p className="text-muted-foreground capitalize">{session.status.replace("_", " ")}</p>
                         </div>
@@ -395,7 +395,7 @@ export default function StudentDashboard() {
                         className="flex items-center justify-between gap-4 rounded-md border p-3"
                         data-testid={`course-hours-${course.id}`}
                       >
-                        <span className="text-sm font-medium truncate flex-1">{course.name}</span>
+                        <span className="text-sm font-medium truncate flex-1">{course.title}</span>
                         <HoursDonutChart 
                           usedMinutes={hours.usedMinutes} 
                           remainingMinutes={hours.remainingMinutes} 
